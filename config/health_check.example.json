@@ -1,0 +1,43 @@
+{
+  "timeout_seconds": 5,
+  "certificate_warn_days": 30,
+  "ports": [
+    {
+      "name": "Nginx HTTP",
+      "host": "example.com",
+      "port": 80
+    },
+    {
+      "name": "PostgreSQL Internal",
+      "host": "127.0.0.1",
+      "port": 5432
+    },
+    {
+      "name": "Redis Internal",
+      "host": "127.0.0.1",
+      "port": 6379
+    }
+  ],
+  "certificates": [
+    {
+      "name": "Main HTTPS Certificate",
+      "host": "example.com",
+      "port": 443,
+      "server_name": "example.com"
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "Homepage",
+      "url": "https://example.com/",
+      "method": "GET",
+      "expected_status": [200]
+    },
+    {
+      "name": "Health API",
+      "url": "https://example.com/health",
+      "method": "GET",
+      "expected_status": [200, 404]
+    }
+  ]
+}

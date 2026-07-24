@@ -1,0 +1,100 @@
+﻿apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitor-backend-config
+  namespace: platform
+data:
+  APP_NAME: "K8s Intelligent Monitoring Platform"
+  API_PREFIX: "/api/v1"
+  DEBUG: "false"
+  JWT_ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
+  PROMETHEUS_URL: "http://monitoring-ack-prometheus-prometheus.monitoring.svc.cluster.local:9090"
+  ALERTMANAGER_URL: "http://monitoring-ack-prometheus-alertmanager.monitoring.svc.cluster.local:9093"
+  LOKI_URL: "http://loki-gateway.logging.svc.cluster.local"
+  GRAFANA_URL: "http://monitoring-grafana.monitoring.svc.cluster.local:80"
+  GRAFANA_PUBLIC_URL: "http://114.55.117.211:31000"
+  AI_API_BASE_URL: "https://api.deepseek.com"
+  AI_MODEL: "deepseek-v4-flash"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitor-backend
+  namespace: platform
+  labels:
+    app: monitor-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitor-backend
+  template:
+    metadata:
+      labels:
+        app: monitor-backend
+    spec:
+      containers:
+        - name: monitor-backend
+          image: registry.cn-hangzhou.aliyuncs.com/your-namespace/monitor-backend:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: monitor-backend-config
+            - secretRef:
+                name: monitor-backend-secret
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitor-backend
+  namespace: platform
+spec:
+  type: ClusterIP
+  selector:
+    app: monitor-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: monitor-backend
+  namespace: platform
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.monitor.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: monitor-backend
+                port:
+                  number: 8000
