@@ -1,4 +1,4 @@
-﻿pipeline {
+pipeline {
     agent any
 
     options {
@@ -104,7 +104,7 @@
                 stage('构建前端镜像') {
                     steps {
                         sh '''
-                            sed -i '1s/^\xEF\xBB\xBF//' frontend/nginx.conf
+                            python3 -c "from pathlib import Path; p=Path('frontend/nginx.conf'); data=p.read_bytes(); p.write_bytes(data[3:] if data.startswith(bytes([239,187,191])) else data)"
                             docker build \
                               --build-arg VITE_API_BASE_URL=/api/v1 \
                               --build-arg VITE_GRAFANA_URL=http://114.55.117.211:31000 \
@@ -172,3 +172,4 @@
         }
     }
 }
+
