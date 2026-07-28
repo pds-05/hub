@@ -10,7 +10,7 @@ pipeline {
     parameters {
         string(name: 'GIT_BRANCH', defaultValue: 'main', description: '要构建的 GitLab 分支')
         booleanParam(name: 'RUN_SONAR', defaultValue: true, description: '是否执行 SonarQube 代码审查')
-        booleanParam(name: 'BUILD_AGENT', defaultValue: true, description: '是否构建并推送 monitor-agent 镜像')
+        booleanParam(name: 'BUILD_AGENT', defaultValue: false, description: '是否构建并推送 monitor-agent 镜像')
         booleanParam(name: 'DEPLOY_TO_K8S', defaultValue: true, description: '是否发布到 Kubernetes')
     }
 
