@@ -11,6 +11,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.models.monitor_target import MonitorTarget
+from app.services.scrape_config_schema import normalize_scrape_scheme
 
 
 class ScrapeConfigError(Exception):
@@ -92,7 +93,7 @@ class ScrapeConfigManager:
         }
         spec: dict[str, Any] = {
             "jobName": self.resource_name(target.id),
-            "scheme": parsed.scheme,
+            "scheme": normalize_scrape_scheme(parsed.scheme),
             "metricsPath": parsed.path or "/metrics",
             "scrapeInterval": self.scrape_interval,
             "scrapeTimeout": self.scrape_timeout,

@@ -41,6 +41,7 @@ pipeline {
                 sh '''
                     cd backend
                     python3 -m compileall app
+                    python3 -m unittest discover -s tests -p 'test_unit_*.py'
                 '''
             }
         }
@@ -78,6 +79,19 @@ pipeline {
                         test "$(kubectl auth can-i create roles.rbac.authorization.k8s.io -n monitoring)" = "yes"
                         test "$(kubectl auth can-i create rolebindings.rbac.authorization.k8s.io -n monitoring)" = "yes"
                         test "$(kubectl auth can-i get scrapeconfigs.monitoring.coreos.com -n monitoring)" = "yes"
+                        printf '%s\n' \
+                          'apiVersion: monitoring.coreos.com/v1alpha1' \
+                          'kind: ScrapeConfig' \
+                          'metadata:' \
+                          '  name: monitor-platform-ci-preflight' \
+                          '  namespace: monitoring' \
+                          'spec:' \
+                          '  jobName: monitor-platform-ci-preflight' \
+                          '  scheme: HTTP' \
+                          '  metricsPath: /metrics' \
+                          '  staticConfigs:' \
+                          '    - targets: ["example.com:80"]' \
+                          | kubectl apply --dry-run=server -f - >/dev/null
                     '''
                 }
             }
