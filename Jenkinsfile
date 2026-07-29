@@ -3,15 +3,15 @@ pipeline {
 
     options {
         timestamps()
+        skipDefaultCheckout(true)
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     parameters {
-        string(name: 'GIT_BRANCH', defaultValue: 'main', description: '要构建的 GitLab 分支')
-        booleanParam(name: 'RUN_SONAR', defaultValue: true, description: '是否执行 SonarQube 代码审查')
-        booleanParam(name: 'BUILD_AGENT', defaultValue: false, description: '是否构建并推送 monitor-agent 镜像')
-        booleanParam(name: 'DEPLOY_TO_K8S', defaultValue: true, description: '是否发布到 Kubernetes')
+        booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Run SonarQube analysis and quality gate')
+        booleanParam(name: 'BUILD_AGENT', defaultValue: false, description: 'Build and push the monitor-agent image')
+        booleanParam(name: 'DEPLOY_TO_K8S', defaultValue: true, description: 'Deploy the release and required runtime configuration to Kubernetes')
     }
 
     environment {
@@ -25,7 +25,7 @@ pipeline {
     }
 
     stages {
-        stage('拉取源码') {
+        stage('Checkout source') {
             steps {
                 checkout scm
                 script {
@@ -35,7 +35,7 @@ pipeline {
             }
         }
 
-        stage('后端语法检查') {
+        stage('Backend syntax check') {
             steps {
                 sh '''
                     cd backend
@@ -44,7 +44,7 @@ pipeline {
             }
         }
 
-        stage('前端构建检查') {
+        stage('Frontend build check') {
             steps {
                 sh '''
                     cd frontend
@@ -54,7 +54,7 @@ pipeline {
             }
         }
 
-        stage('Agent 语法检查') {
+        stage('Agent syntax check') {
             when { expression { return params.BUILD_AGENT } }
             steps {
                 sh '''
@@ -64,7 +64,7 @@ pipeline {
             }
         }
 
-        stage('SonarQube 代码审查') {
+        stage('SonarQube analysis') {
             when { expression { return params.RUN_SONAR } }
             steps {
                 withSonarQubeEnv('sonarqube') {
@@ -73,7 +73,7 @@ pipeline {
             }
         }
 
-        stage('SonarQube 质量门禁') {
+        stage('SonarQube quality gate') {
             when { expression { return params.RUN_SONAR } }
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -82,7 +82,7 @@ pipeline {
             }
         }
 
-        stage('登录 Harbor') {
+        stage('Harbor login') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'harbor-admin', usernameVariable: 'HARBOR_USERNAME', passwordVariable: 'HARBOR_PASSWORD')]) {
                     sh '''
@@ -92,16 +92,17 @@ pipeline {
             }
         }
 
-        stage('构建镜像') {
+        stage('Build images') {
             parallel {
-                stage('构建后端镜像') {
+                stage('Build backend image') {
                     steps {
                         sh '''
                             docker build -t "$BACKEND_IMAGE:$IMAGE_TAG" -t "$BACKEND_IMAGE:latest" backend
                         '''
                     }
                 }
-                stage('构建前端镜像') {
+
+                stage('Build frontend image') {
                     steps {
                         sh '''
                             python3 -c "from pathlib import Path; p=Path('frontend/nginx.conf'); data=p.read_bytes(); p.write_bytes(data[3:] if data.startswith(bytes([239,187,191])) else data)"
@@ -114,7 +115,8 @@ pipeline {
                         '''
                     }
                 }
-                stage('构建 Agent 镜像') {
+
+                stage('Build agent image') {
                     when { expression { return params.BUILD_AGENT } }
                     steps {
                         sh '''
@@ -125,7 +127,7 @@ pipeline {
             }
         }
 
-        stage('推送镜像到 Harbor') {
+        stage('Push images to Harbor') {
             steps {
                 sh '''
                     docker push "$BACKEND_IMAGE:$IMAGE_TAG"
@@ -144,17 +146,83 @@ pipeline {
             }
         }
 
-        stage('发布到 Kubernetes') {
+        stage('Deploy to Kubernetes') {
             when { expression { return params.DEPLOY_TO_K8S } }
             steps {
                 withCredentials([file(credentialsId: 'kubeconfig-platform', variable: 'KUBECONFIG_FILE')]) {
-                    sh '''
-                        export KUBECONFIG="$KUBECONFIG_FILE"
-                        kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-backend monitor-backend="$BACKEND_IMAGE:$IMAGE_TAG"
-                        kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s
-                        kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-frontend monitor-frontend="$FRONTEND_IMAGE:$IMAGE_TAG"
-                        kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s
-                    '''
+                    script {
+                        env.PREVIOUS_BACKEND_IMAGE = sh(
+                            script: '''
+                                export KUBECONFIG="$KUBECONFIG_FILE"
+                                kubectl -n "$K8S_NAMESPACE" get deployment monitor-backend -o jsonpath='{.spec.template.spec.containers[?(@.name=="monitor-backend")].image}'
+                            ''',
+                            returnStdout: true
+                        ).trim()
+                        env.PREVIOUS_FRONTEND_IMAGE = sh(
+                            script: '''
+                                export KUBECONFIG="$KUBECONFIG_FILE"
+                                kubectl -n "$K8S_NAMESPACE" get deployment monitor-frontend -o jsonpath='{.spec.template.spec.containers[?(@.name=="monitor-frontend")].image}'
+                            ''',
+                            returnStdout: true
+                        ).trim()
+
+                        try {
+                            sh '''
+                                set -eu
+                                export KUBECONFIG="$KUBECONFIG_FILE"
+
+                                kubectl get crd scrapeconfigs.monitoring.coreos.com >/dev/null
+                                test "$(kubectl auth can-i patch deployments.apps -n "$K8S_NAMESPACE")" = "yes"
+                                test "$(kubectl auth can-i create serviceaccounts -n "$K8S_NAMESPACE")" = "yes"
+                                test "$(kubectl auth can-i create roles.rbac.authorization.k8s.io -n monitoring)" = "yes"
+                                test "$(kubectl auth can-i create rolebindings.rbac.authorization.k8s.io -n monitoring)" = "yes"
+                                kubectl apply -f k8s/monitor-backend-scrapeconfig-rbac.yaml
+
+                                kubectl -n "$K8S_NAMESPACE" patch deployment monitor-backend \
+                                  --type merge \
+                                  -p '{"spec":{"template":{"spec":{"serviceAccountName":"monitor-backend"}}}}'
+
+                                kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-backend \
+                                  PROMETHEUS_SCRAPE_CONFIG_ENABLED=true \
+                                  PROMETHEUS_SCRAPE_CONFIG_NAMESPACE=monitoring \
+                                  PROMETHEUS_SCRAPE_CONFIG_API_VERSION=monitoring.coreos.com/v1alpha1 \
+                                  PROMETHEUS_SCRAPE_CONFIG_LABELS_JSON='{"release":"monitoring"}' \
+                                  PROMETHEUS_TARGET_SCRAPE_INTERVAL=30s \
+                                  PROMETHEUS_TARGET_SCRAPE_TIMEOUT=10s \
+                                  PROMETHEUS_ALLOW_PRIVATE_TARGETS=false \
+                                  TARGET_ALERT_EVALUATION_ENABLED=true \
+                                  TARGET_ALERT_EVALUATION_INTERVAL_SECONDS=60
+
+                                kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-backend \
+                                  monitor-backend="$BACKEND_IMAGE:$IMAGE_TAG"
+                                kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-frontend \
+                                  monitor-frontend="$FRONTEND_IMAGE:$IMAGE_TAG"
+
+                                kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s
+                                kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s
+
+                                test "$(kubectl -n "$K8S_NAMESPACE" get deployment monitor-backend -o jsonpath='{.spec.template.spec.serviceAccountName}')" = "monitor-backend"
+                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- \
+                                  sh -c 'test "$PROMETHEUS_SCRAPE_CONFIG_ENABLED" = "true" && test "$TARGET_ALERT_EVALUATION_ENABLED" = "true"'
+                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c \
+                                  'import ssl, urllib.request; token=open("/var/run/secrets/kubernetes.io/serviceaccount/token", encoding="utf-8").read().strip(); context=ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); request=urllib.request.Request("https://kubernetes.default.svc/apis/monitoring.coreos.com/v1alpha1/namespaces/monitoring/scrapeconfigs", headers={"Authorization": "Bearer " + token}); response=urllib.request.urlopen(request, context=context, timeout=10); assert response.status == 200'
+
+                                kubectl get scrapeconfig -n monitoring -l monitor-platform-managed=true || true
+                            '''
+                        } catch (error) {
+                            echo 'Kubernetes deployment failed. Restoring the previous application images.'
+                            sh '''
+                                export KUBECONFIG="$KUBECONFIG_FILE"
+                                kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-backend \
+                                  monitor-backend="$PREVIOUS_BACKEND_IMAGE" || true
+                                kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-frontend \
+                                  monitor-frontend="$PREVIOUS_FRONTEND_IMAGE" || true
+                                kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s || true
+                                kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s || true
+                            '''
+                            throw error
+                        }
+                    }
                 }
             }
         }
@@ -165,11 +233,10 @@ pipeline {
             sh 'docker logout "$HARBOR_REGISTRY" || true'
         }
         success {
-            echo "CI/CD 完成，镜像版本：${IMAGE_TAG}"
+            echo "CI/CD completed. Image tag: ${IMAGE_TAG}"
         }
         failure {
-            echo 'CI/CD 失败，请查看失败阶段日志。'
+            echo 'CI/CD failed. Check the failed stage logs.'
         }
     }
 }
-
