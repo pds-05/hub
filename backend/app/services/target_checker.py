@@ -15,6 +15,10 @@ from app.models.monitor_target import MonitorTarget
 MetricSamples = dict[str, list[tuple[dict[str, str], float]]]
 
 
+def is_http_error_status(status_code: int) -> bool:
+    return 400 <= status_code <= 599
+
+
 def parse_metric_labels(label_text: str) -> dict[str, str]:
     labels: dict[str, str] = {}
     for item in label_text.split(","):
@@ -368,7 +372,7 @@ async def check_http_target(
         failed_reasons: list[str] = []
         if not details["dns_ok"]:
             failed_reasons.append("DNS resolution failed")
-        if response.status_code >= 500:
+        if is_http_error_status(response.status_code):
             failed_reasons.append(f"HTTP status is {response.status_code}")
         if expected_keyword and not details["keyword_ok"]:
             failed_reasons.append("Expected keyword not found")
