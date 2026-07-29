@@ -13,7 +13,9 @@
 7. 登录 Harbor。
 8. 构建 backend、frontend、agent 三个镜像。
 9. 推送镜像到 Harbor。
-10. 使用 kubectl 更新 K8s Deployment。
+10. 检查 Jenkins 部署权限并应用后端 RBAC。
+11. 自动配置持续采集、告警评估和后端 ServiceAccount。
+12. 使用 kubectl 更新 K8s Deployment；失败时恢复上一版镜像。
 
 ## 2. Jenkins 需要准备的插件
 
@@ -42,7 +44,15 @@
 
 类型：Secret file
 
-内容：上传可以访问 platform 命名空间的 kubeconfig 文件
+内容：上传 `platform/jenkins-deployer` ServiceAccount 对应的 kubeconfig 文件。
+
+首次使用时由集群管理员执行一次：
+
+```bash
+kubectl apply -f k8s/jenkins-deployer-rbac.yaml
+```
+
+该授权只允许 Jenkins 管理 `platform` 中的平台 Deployment、Pod 和 ServiceAccount，以及 `monitoring` 中的 ScrapeConfig 和对应命名空间级 RBAC。完成这次引导后，后续发布无需再手动执行 Kubernetes 配置命令。
 
 ID：`kubeconfig-platform`
 
@@ -85,12 +95,16 @@ Agent 还会额外推送：
 
 ## 6. Kubernetes 发布方式
 
-流水线使用：
+流水线会自动完成：
 
-```bash
-kubectl -n platform set image deployment/monitor-backend monitor-backend=<backend-image>
-kubectl -n platform set image deployment/monitor-frontend monitor-frontend=<frontend-image>
-```
+1. 检查 Jenkins 是否具备所需权限。
+2. 应用 `k8s/monitor-backend-scrapeconfig-rbac.yaml`。
+3. 配置后端持续采集和定时告警环境变量。
+4. 将后端绑定到 `monitor-backend` ServiceAccount。
+5. 更新前后端镜像并等待滚动发布。
+6. 验证后端运行配置和 ScrapeConfig API 权限。
+7. 发布失败时恢复上一版前后端镜像。
+8. 发布成功后更新 Harbor 的 `latest` 稳定标签。
 
 这要求集群里已有 Deployment：
 

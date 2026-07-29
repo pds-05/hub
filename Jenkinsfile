@@ -21,15 +21,16 @@ pipeline {
         FRONTEND_IMAGE = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/monitor-frontend"
         AGENT_IMAGE = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/monitor-agent"
         K8S_NAMESPACE = 'platform'
-        IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT ? env.GIT_COMMIT.take(8) : 'manual'}"
     }
 
     stages {
         stage('Checkout source') {
             steps {
-                checkout scm
                 script {
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()}"
+                    def scmVars = checkout scm
+                    def shortCommit = scmVars.GIT_COMMIT ? scmVars.GIT_COMMIT.take(8) : sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${shortCommit}"
+                    echo "Release image tag: ${env.IMAGE_TAG}"
                 }
                 sh 'git log -1 --oneline'
             }
@@ -61,6 +62,24 @@ pipeline {
                     cd agent
                     python3 -m compileall agent.py
                 '''
+            }
+        }
+
+        stage('Kubernetes deployment preflight') {
+            when { expression { return params.DEPLOY_TO_K8S } }
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig-platform', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        set -eu
+                        export KUBECONFIG="$KUBECONFIG_FILE"
+                        test "$(kubectl auth can-i get deployments.apps -n "$K8S_NAMESPACE")" = "yes"
+                        test "$(kubectl auth can-i patch deployments.apps -n "$K8S_NAMESPACE")" = "yes"
+                        test "$(kubectl auth can-i create serviceaccounts -n "$K8S_NAMESPACE")" = "yes"
+                        test "$(kubectl auth can-i create roles.rbac.authorization.k8s.io -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i create rolebindings.rbac.authorization.k8s.io -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i get scrapeconfigs.monitoring.coreos.com -n monitoring)" = "yes"
+                    '''
+                }
             }
         }
 
@@ -127,19 +146,16 @@ pipeline {
             }
         }
 
-        stage('Push images to Harbor') {
+        stage('Push release images to Harbor') {
             steps {
                 sh '''
                     docker push "$BACKEND_IMAGE:$IMAGE_TAG"
-                    docker push "$BACKEND_IMAGE:latest"
                     docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
-                    docker push "$FRONTEND_IMAGE:latest"
                 '''
                 script {
                     if (params.BUILD_AGENT) {
                         sh '''
                             docker push "$AGENT_IMAGE:$IMAGE_TAG"
-                            docker push "$AGENT_IMAGE:v1"
                         '''
                     }
                 }
@@ -171,11 +187,6 @@ pipeline {
                                 set -eu
                                 export KUBECONFIG="$KUBECONFIG_FILE"
 
-                                kubectl get crd scrapeconfigs.monitoring.coreos.com >/dev/null
-                                test "$(kubectl auth can-i patch deployments.apps -n "$K8S_NAMESPACE")" = "yes"
-                                test "$(kubectl auth can-i create serviceaccounts -n "$K8S_NAMESPACE")" = "yes"
-                                test "$(kubectl auth can-i create roles.rbac.authorization.k8s.io -n monitoring)" = "yes"
-                                test "$(kubectl auth can-i create rolebindings.rbac.authorization.k8s.io -n monitoring)" = "yes"
                                 kubectl apply -f k8s/monitor-backend-scrapeconfig-rbac.yaml
 
                                 kubectl -n "$K8S_NAMESPACE" patch deployment monitor-backend \
@@ -222,6 +233,20 @@ pipeline {
                             '''
                             throw error
                         }
+                    }
+                }
+            }
+        }
+
+        stage('Promote stable image tags') {
+            steps {
+                sh '''
+                    docker push "$BACKEND_IMAGE:latest"
+                    docker push "$FRONTEND_IMAGE:latest"
+                '''
+                script {
+                    if (params.BUILD_AGENT) {
+                        sh 'docker push "$AGENT_IMAGE:v1"'
                     }
                 }
             }
