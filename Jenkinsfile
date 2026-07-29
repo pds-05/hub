@@ -230,6 +230,7 @@ pipeline {
                                   -p '{"spec":{"template":{"spec":{"serviceAccountName":"monitor-backend"}}}}'
 
                                 kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-backend \
+                                  AGENT_PUBLIC_API_URL=http://114.55.117.211:30080/api/v1 \
                                   PROMETHEUS_SCRAPE_CONFIG_ENABLED=true \
                                   PROMETHEUS_SCRAPE_CONFIG_NAMESPACE=monitoring \
                                   PROMETHEUS_SCRAPE_CONFIG_API_VERSION=monitoring.coreos.com/v1alpha1 \

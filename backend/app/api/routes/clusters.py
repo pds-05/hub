@@ -12,6 +12,7 @@ from app.models.cluster_agent import ClusterAgentHeartbeat, ClusterAgentReport
 from app.models.managed_cluster import ManagedCluster
 from app.models.user import User
 from app.schemas.common import MessageResponse
+from app.services.cluster_agent_config import normalize_agent_public_api_url
 from app.schemas.managed_cluster import (
     ClusterAgentAck,
     ClusterAgentHeartbeatRead,
@@ -60,7 +61,7 @@ def get_agent_cluster(agent_token: str | None, db: Session) -> ManagedCluster:
 
 
 def platform_api_url() -> str:
-    return "http://monitor-backend.platform.svc.cluster.local:8000/api/v1"
+    return normalize_agent_public_api_url(get_settings().agent_public_api_url)
 
 
 def build_agent_manifest(cluster: ManagedCluster) -> str:
@@ -238,7 +239,13 @@ def get_cluster_install(
     cluster = get_owned_cluster(cluster_id, db, current_user)
     manifest = build_agent_manifest(cluster)
     command = "cat <<'EOF' | kubectl apply -f -\n" + manifest + "\nEOF"
-    return ManagedClusterInstallRead(cluster_id=cluster.id, agent_token=cluster.agent_token, manifest=manifest, install_command=command)
+    return ManagedClusterInstallRead(
+        cluster_id=cluster.id,
+        agent_token=cluster.agent_token,
+        platform_api_url=platform_api_url(),
+        manifest=manifest,
+        install_command=command,
+    )
 
 
 @router.get("/{cluster_id}/heartbeats", response_model=list[ClusterAgentHeartbeatRead])

@@ -43,6 +43,7 @@ class ManagedClusterRead(BaseModel):
 class ManagedClusterInstallRead(BaseModel):
     cluster_id: int
     agent_token: str
+    platform_api_url: str
     install_command: str
     manifest: str
 

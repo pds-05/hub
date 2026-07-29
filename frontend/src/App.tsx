@@ -40,7 +40,7 @@ type CurrentUser = { id: number; username: string; email: string; role: 'root' |
 type PlatformHealthService = { name: string; status: 'healthy' | 'degraded' | 'down' | string; message: string; url?: string };
 type PlatformHealth = { status: 'healthy' | 'degraded' | string; services: PlatformHealthService[]; };
 type ManagedCluster = { id: number; user_id: number; name: string; provider: string; api_server?: string | null; description?: string | null; agent_token: string; status: string; agent_version?: string | null; node_count: number; pod_count: number; metrics_count: number; logs_count: number; alerts_count: number; last_heartbeat_at?: string | null; created_at: string; updated_at: string; };
-type ManagedClusterInstall = { cluster_id: number; agent_token: string; install_command: string; manifest: string; };
+type ManagedClusterInstall = { cluster_id: number; agent_token: string; platform_api_url: string; install_command: string; manifest: string; };
 type ClusterAgentHeartbeat = { id: number; cluster_id: number; status: string; agent_version?: string | null; node_count: number; pod_count: number; message?: string | null; payload: Record<string, unknown>; created_at: string; };
 type ClusterAgentReport = { id: number; cluster_id: number; report_type: 'metric' | 'log' | 'alert'; source?: string | null; level?: string | null; message?: string | null; payload: Record<string, unknown>; created_at: string; };
 
@@ -88,6 +88,26 @@ async function request<T>(path: string, token: string, options: RequestInit = {}
     throw new ApiError(body.detail || `请求失败：${response.status}`, response.status);
   }
   return response.json();
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error('浏览器未允许复制到剪贴板');
 }
 
 function levelColor(level: string) {
@@ -1582,10 +1602,19 @@ export default function App() {
           <Card title="Agent 安装命令" extra={selectedCluster ? <Tag>{selectedCluster.name}</Tag> : null}>
             {selectedCluster && clusterInstall ? (
               <Space direction="vertical" className="fullWidth" size={12}>
-                <Alert type="warning" showIcon message="请在被监控的 Kubernetes 集群控制节点执行。执行前确认该集群可以访问本平台 API 地址。" />
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="执行前检查平台 API 地址"
+                  description={
+                    <>
+                      当前命令使用 <code>{clusterInstall.platform_api_url}</code>。通常无需修改；如果被监控集群无法访问该地址，或平台使用了其他域名、HTTPS、端口或 NAT 地址，请在命令中找到 <code>PLATFORM_API_URL</code> 并替换为该集群可访问的完整地址，且保留 <code>/api/v1</code>。执行前可访问 <code>{clusterInstall.platform_api_url}/health</code> 验证连通性。
+                    </>
+                  }
+                />
                 <Input.TextArea value={clusterInstall.install_command} rows={16} readOnly />
                 <Space>
-                  <Button onClick={() => navigator.clipboard.writeText(clusterInstall.install_command).then(() => message.success('已复制安装命令'))}>复制命令</Button>
+                  <Button onClick={() => copyText(clusterInstall.install_command).then(() => message.success('已复制安装命令')).catch((error: Error) => message.error('复制失败：' + error.message))}>复制命令</Button>
                   <Button onClick={() => loadClusterDetails(selectedCluster.id)}>刷新详情</Button>
                 </Space>
               </Space>
