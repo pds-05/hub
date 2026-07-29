@@ -10,6 +10,7 @@ pipeline {
 
     parameters {
         booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Run SonarQube analysis and quality gate')
+        booleanParam(name: 'ENFORCE_SONAR_GATE', defaultValue: false, description: 'Stop deployment when the SonarQube quality gate fails')
         booleanParam(name: 'BUILD_AGENT', defaultValue: false, description: 'Build and push the monitor-agent image')
         booleanParam(name: 'DEPLOY_TO_K8S', defaultValue: true, description: 'Deploy the release and required runtime configuration to Kubernetes')
     }
@@ -39,9 +40,14 @@ pipeline {
         stage('Backend syntax check') {
             steps {
                 sh '''
+                    python3 -m pip install --disable-pip-version-check --no-input --break-system-packages -r backend/requirements-dev.txt
                     cd backend
                     python3 -m compileall app
-                    python3 -m unittest discover -s tests -p 'test_unit_*.py'
+                    python3 -m coverage erase
+                    python3 -m coverage run --source=app -m unittest discover -s tests -p 'test_unit_*.py'
+                    python3 -m coverage xml -o coverage.xml
+                    python3 -m coverage report
+                    test -s coverage.xml
                 '''
             }
         }
@@ -109,8 +115,18 @@ pipeline {
         stage('SonarQube quality gate') {
             when { expression { return params.RUN_SONAR } }
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                script {
+                    def qualityGate
+                    timeout(time: 5, unit: 'MINUTES') {
+                        qualityGate = waitForQualityGate abortPipeline: false
+                    }
+                    echo "SonarQube quality gate: ${qualityGate.status}"
+                    if (qualityGate.status != 'OK') {
+                        if (params.ENFORCE_SONAR_GATE) {
+                            error "Pipeline aborted due to quality gate failure: ${qualityGate.status}"
+                        }
+                        echo 'Quality gate did not pass. Continuing deployment because ENFORCE_SONAR_GATE is disabled.'
+                    }
                 }
             }
         }

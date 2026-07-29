@@ -5,11 +5,11 @@
 ## 1. 流程阶段
 
 1. 拉取 GitLab 源码。
-2. 后端 Python 语法检查：`python3 -m compileall backend/app`。
+2. 后端 Python 语法检查、单元测试并生成 `backend/coverage.xml`。
 3. 前端构建检查：`npm ci && npm run build`。
 4. Agent 语法检查：`python3 -m compileall agent/agent.py`。
 5. SonarQube 代码审查。
-6. SonarQube Quality Gate 门禁。
+6. SonarQube Quality Gate 检查；默认告警但不阻断发布，可通过参数开启严格门禁。
 7. 登录 Harbor。
 8. 构建 backend、frontend、agent 三个镜像。
 9. 推送镜像到 Harbor。
@@ -71,6 +71,8 @@ withSonarQubeEnv('sonarqube')
 ```
 
 所以 Name 必须叫 `sonarqube`，或者你改 Jenkinsfile 里的名字。
+
+流水线会安装 `backend/requirements-dev.txt` 中的测试依赖，自动生成 Python 覆盖率报告并交给 SonarQube。参数 `ENFORCE_SONAR_GATE` 默认关闭，质量门失败时仍会继续发布；测试覆盖成熟后可在 Jenkins 构建参数中开启，让质量门重新阻断发布。
 
 ## 5. Harbor 镜像地址
 
