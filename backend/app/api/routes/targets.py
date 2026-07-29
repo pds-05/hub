@@ -16,6 +16,8 @@ from app.schemas.monitor_target import (
     MonitorTargetSummaryRead,
     MonitorTargetUpdate,
 )
+from app.services.prometheus_client import PrometheusClient, PrometheusError, get_prometheus_client
+from app.services.scrape_config_manager import ScrapeConfigError, ScrapeConfigManager, get_scrape_config_manager
 from app.services.target_checker import check_monitor_target
 
 router = APIRouter(prefix="/targets", tags=["monitor targets"])
@@ -112,15 +114,22 @@ def to_check_read(check_result: TargetCheckResult) -> MonitorTargetCheckRead:
 
 
 @router.post("", response_model=MonitorTargetRead)
-def create_target(
+async def create_target(
     payload: MonitorTargetCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scrape_configs: ScrapeConfigManager = Depends(get_scrape_config_manager),
 ) -> MonitorTarget:
     target = MonitorTarget(**normalize_target_payload(payload.model_dump()), user_id=current_user.id)
     db.add(target)
     db.commit()
     db.refresh(target)
+    try:
+        await scrape_configs.upsert(target)
+    except ScrapeConfigError as exc:
+        db.delete(target)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return target
 
 
@@ -262,13 +271,23 @@ def get_target(
 
 
 @router.put("/{target_id}", response_model=MonitorTargetRead)
-def update_target(
+async def update_target(
     target_id: int,
     payload: MonitorTargetUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scrape_configs: ScrapeConfigManager = Depends(get_scrape_config_manager),
 ) -> MonitorTarget:
     target = get_owned_target(target_id, db, current_user)
+    original = {
+        "name": target.name,
+        "target_type": target.target_type,
+        "endpoint": target.endpoint,
+        "expected_keyword": target.expected_keyword,
+        "exporter_kind": target.exporter_kind,
+        "description": target.description,
+    }
+    was_exporter = target.target_type == "exporter"
     update_data = payload.model_dump(exclude_unset=True)
     if "target_type" not in update_data:
         update_data["target_type"] = target.target_type
@@ -278,20 +297,77 @@ def update_target(
 
     db.commit()
     db.refresh(target)
+    try:
+        if target.target_type == "exporter":
+            await scrape_configs.upsert(target)
+        elif was_exporter:
+            await scrape_configs.delete(target.id)
+    except ScrapeConfigError as exc:
+        for field, value in original.items():
+            setattr(target, field, value)
+        db.commit()
+        db.refresh(target)
+        try:
+            if target.target_type == "exporter":
+                await scrape_configs.upsert(target)
+            else:
+                await scrape_configs.delete(target.id)
+        except ScrapeConfigError:
+            pass
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return target
 
 
 @router.delete("/{target_id}", response_model=MessageResponse)
-def delete_target(
+async def delete_target(
     target_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    scrape_configs: ScrapeConfigManager = Depends(get_scrape_config_manager),
 ) -> MessageResponse:
     target = get_owned_target(target_id, db, current_user)
+    try:
+        if target.target_type == "exporter":
+            await scrape_configs.delete(target.id)
+    except ScrapeConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     target.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return MessageResponse(message="Target deleted")
 
+
+@router.post("/{target_id}/sync")
+async def sync_target_collection(
+    target_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    scrape_configs: ScrapeConfigManager = Depends(get_scrape_config_manager),
+) -> dict:
+    target = get_owned_target(target_id, db, current_user)
+    if target.target_type != "exporter":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有 Exporter 类型支持持续采集")
+    try:
+        resource_name = await scrape_configs.upsert(target)
+    except ScrapeConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"target_id": target.id, "resource_name": resource_name, "message": "采集配置已同步"}
+
+
+@router.get("/{target_id}/metrics")
+async def get_target_metrics(
+    target_id: int,
+    minutes: int = Query(default=60, ge=5, le=1440),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    prometheus: PrometheusClient = Depends(get_prometheus_client),
+) -> dict:
+    target = get_owned_target(target_id, db, current_user)
+    if target.target_type != "exporter":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有 Exporter 类型具有 Prometheus 持续指标")
+    try:
+        return await prometheus.target_metrics(target, minutes=minutes)
+    except PrometheusError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 @router.post("/{target_id}/check", response_model=MonitorTargetCheckRead)
 async def check_target(

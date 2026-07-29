@@ -3,6 +3,7 @@ import { Alert, Button, Card, Col, ConfigProvider, Descriptions, Drawer, Empty, 
 import type { SelectProps } from 'antd';
 import { AimOutlined, BarChartOutlined, CheckCircleOutlined, DashboardOutlined, LoginOutlined, MailOutlined, ProfileOutlined, ReloadOutlined, RobotOutlined, SendOutlined, SettingOutlined, WarningOutlined, HeartOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
+import TargetMetricsPanel from './TargetMetricsPanel';
 import 'antd/dist/reset.css';
 import './styles.css';
 
@@ -197,7 +198,7 @@ const exporterEndpointPlaceholder: Record<ExporterKind, string> = {
   postgresql: '示例：http://114.55.117.211:9187/metrics',
   mongodb: '示例：http://114.55.117.211:9216/metrics',
   kafka: '示例：http://114.55.117.211:9308/metrics',
-  rabbitmq: '示例：http://114.55.117.211:9419/metrics',
+  rabbitmq: '示例：http://用户服务器公网IP:15692/metrics',
   elasticsearch: '示例：http://114.55.117.211:9114/metrics',
   clickhouse: '示例：http://114.55.117.211:9363/metrics',
   zookeeper: '示例：http://114.55.117.211:9141/metrics',
@@ -1532,6 +1533,7 @@ export default function App() {
         <Col xs={24} lg={8}><Card title="监控对象数据">{selectedTarget ? <Descriptions column={1} size="small"><Descriptions.Item label="名称">{selectedTarget.name}</Descriptions.Item><Descriptions.Item label="类型"><Tag>{displayText(selectedTarget.target_type)}</Tag></Descriptions.Item><Descriptions.Item label="地址">{selectedTarget.endpoint}</Descriptions.Item><Descriptions.Item label="状态">{selectedLatestCheck ? <Tag color={statusColor(selectedLatestCheck.status)}>{displayText(selectedLatestCheck.status)}</Tag> : <Tag>未知</Tag>}</Descriptions.Item><Descriptions.Item label="响应">{selectedLatestCheck ? `${selectedLatestCheck.response_time_ms} ms` : '-'}</Descriptions.Item><Descriptions.Item label="消息">{selectedLatestCheck?.message || '-'}</Descriptions.Item></Descriptions> : <Empty description="请选择监控对象" />}</Card></Col>
         <Col xs={24} lg={16}><Card title="检测历史">{selectedTargetChecks.length > 0 ? <><ReactECharts option={targetTrendOption} style={{ height: 260 }} /><Table rowKey="check_id" dataSource={selectedTargetChecks} size="small" pagination={{ pageSize: 6 }} columns={[{ title: '时间', dataIndex: 'checked_at', render: (v: string) => new Date(v).toLocaleString() }, { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColor(v)}>{displayText(v)}</Tag> }, { title: '延迟', dataIndex: 'response_time_ms', render: (v: number) => `${v} ms` }, { title: 'HTTP', dataIndex: 'status_code', render: (v: number | null) => v ?? '-' }, { title: '消息', dataIndex: 'message', ellipsis: true }]} /></> : <Empty description="暂无检测数据" />}</Card></Col>
       </Row>
+      <TargetMetricsPanel target={selectedTarget} token={token} />
     </>
   );
 

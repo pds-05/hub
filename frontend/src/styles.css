@@ -229,3 +229,20 @@
   font-size: 12px;
   line-height: 1.5;
 }
+
+.metricTile {
+  min-height: 104px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.metricTile:hover,
+.metricTile.selected {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 1px rgba(22, 119, 255, 0.12);
+}
+
+.metricTile .ant-statistic-content {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}

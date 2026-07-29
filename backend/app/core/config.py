@@ -19,6 +19,18 @@ class Settings(BaseSettings):
     redis_url: str = "redis://:redis123@redis.platform.svc:6379/0"
 
     prometheus_url: str = "http://monitoring-ack-prometheus-prometheus.monitoring.svc:9090"
+    prometheus_scrape_config_enabled: bool = False
+    prometheus_scrape_config_namespace: str = "monitoring"
+    prometheus_scrape_config_api_version: str = "monitoring.coreos.com/v1alpha1"
+    prometheus_scrape_config_labels_json: str = '{"release":"monitoring"}'
+    prometheus_target_scrape_interval: str = "30s"
+    prometheus_target_scrape_timeout: str = "10s"
+    prometheus_allow_private_targets: bool = False
+    target_alert_evaluation_enabled: bool = False
+    target_alert_evaluation_interval_seconds: int = 60
+    kubernetes_api_url: str = "https://kubernetes.default.svc"
+    kubernetes_service_account_token_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    kubernetes_service_account_ca_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
     alertmanager_url: str = "http://monitoring-ack-prometheus-alertmanager.monitoring.svc:9093"
     loki_url: str = "http://loki-gateway.logging.svc.cluster.local"
     grafana_url: str = "http://monitoring-grafana.monitoring.svc.cluster.local:80"

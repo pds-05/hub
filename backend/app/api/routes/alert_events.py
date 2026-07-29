@@ -469,6 +469,7 @@ async def evaluate_node_alert_events(
 async def evaluate_target_alert_events(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    prometheus: PrometheusClient = Depends(get_prometheus_client),
 ) -> AlertEventEvaluateResponse:
     rules = (
         db.query(AlertRule)
@@ -485,17 +486,48 @@ async def evaluate_target_alert_events(
 
     for target in targets:
         check = latest_target_check(db, current_user.id, target.id)
-        if check is None:
+        continuous_metrics: dict[str, float | None] = {}
+        if target.target_type == "exporter":
+            try:
+                continuous_metrics = await prometheus.target_metric_values(target)
+            except PrometheusUnavailableError:
+                continuous_metrics = {}
+        if check is None and not continuous_metrics:
             continue
         instance = target.endpoint
         for rule in rules:
-            value = target_metric_value(rule, check)
+            value = None
+            if continuous_metrics:
+                if rule.metric == "status_down":
+                    up_value = continuous_metrics.get("up")
+                    value = 1.0 if up_value == 0 else 0.0 if isinstance(up_value, (int, float)) else None
+                else:
+                    continuous_metric_map = {
+                        "exporter_up": "up",
+                        "exporter_metric_count": "metric_count",
+                        "exporter_series_count": "series_count",
+                    }
+                    continuous_key = continuous_metric_map.get(rule.metric)
+                    if continuous_key is None:
+                        prefixes = (
+                            "mysql_", "redis_", "postgresql_", "nginx_", "mongodb_", "kafka_",
+                            "rabbitmq_", "elasticsearch_", "clickhouse_", "zookeeper_", "etcd_",
+                            "windows_",
+                        )
+                        continuous_key = rule.metric
+                        for prefix in prefixes:
+                            if continuous_key.startswith(prefix):
+                                continuous_key = continuous_key[len(prefix):]
+                                break
+                    value = continuous_metrics.get(continuous_key)
+            if value is None and check is not None:
+                value = target_metric_value(rule, check)
             if value is None or not compare_value(value, rule.operator, rule.threshold):
                 continue
             triggered_count += 1
             key = (rule.id, instance, rule.metric)
             triggered_keys.add(key)
-            message = f"{target.name} {rule.metric} {value} {rule.operator} {rule.threshold}: {check.message}"
+            message = f"{target.name} {rule.metric} {value} {rule.operator} {rule.threshold}: {check.message if check else 'Prometheus continuous collection'}"
             event = (
                 db.query(AlertEvent)
                 .filter(

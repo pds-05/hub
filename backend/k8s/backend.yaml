@@ -1,4 +1,34 @@
 ﻿apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitor-backend
+  namespace: platform
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: monitor-backend-scrapeconfig
+  namespace: monitoring
+rules:
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["scrapeconfigs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: monitor-backend-scrapeconfig
+  namespace: monitoring
+subjects:
+  - kind: ServiceAccount
+    name: monitor-backend
+    namespace: platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: monitor-backend-scrapeconfig
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: monitor-backend-config
@@ -10,6 +40,15 @@ data:
   JWT_ALGORITHM: "HS256"
   ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
   PROMETHEUS_URL: "http://monitoring-ack-prometheus-prometheus.monitoring.svc.cluster.local:9090"
+  PROMETHEUS_SCRAPE_CONFIG_ENABLED: "true"
+  PROMETHEUS_SCRAPE_CONFIG_NAMESPACE: "monitoring"
+  PROMETHEUS_SCRAPE_CONFIG_API_VERSION: "monitoring.coreos.com/v1alpha1"
+  PROMETHEUS_SCRAPE_CONFIG_LABELS_JSON: '{"release":"monitoring"}'
+  PROMETHEUS_TARGET_SCRAPE_INTERVAL: "30s"
+  PROMETHEUS_TARGET_SCRAPE_TIMEOUT: "10s"
+  PROMETHEUS_ALLOW_PRIVATE_TARGETS: "false"
+  TARGET_ALERT_EVALUATION_ENABLED: "true"
+  TARGET_ALERT_EVALUATION_INTERVAL_SECONDS: "60"
   ALERTMANAGER_URL: "http://monitoring-ack-prometheus-alertmanager.monitoring.svc.cluster.local:9093"
   LOKI_URL: "http://loki-gateway.logging.svc.cluster.local"
   GRAFANA_URL: "http://monitoring-grafana.monitoring.svc.cluster.local:80"
@@ -34,6 +73,7 @@ spec:
       labels:
         app: monitor-backend
     spec:
+      serviceAccountName: monitor-backend
       containers:
         - name: monitor-backend
           image: registry.cn-hangzhou.aliyuncs.com/your-namespace/monitor-backend:v1
