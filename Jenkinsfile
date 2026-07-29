@@ -4,7 +4,7 @@ pipeline {
     options {
         timestamps()
         skipDefaultCheckout(true)
-        disableConcurrentBuilds()
+        disableConcurrentBuilds(abortPrevious: true)
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
@@ -40,14 +40,20 @@ pipeline {
         stage('Backend syntax check') {
             steps {
                 sh '''
-                    python3 -m pip install --disable-pip-version-check --no-input --break-system-packages -r backend/requirements-dev.txt
                     cd backend
                     python3 -m compileall app
-                    python3 -m coverage erase
-                    python3 -m coverage run --source=app -m unittest discover -s tests -p 'test_unit_*.py'
-                    python3 -m coverage xml -o coverage.xml
-                    python3 -m coverage report
-                    test -s coverage.xml
+                    if python3 -m coverage --version >/dev/null 2>&1 || \
+                       timeout 120s python3 -m pip install --disable-pip-version-check --no-input \
+                         --break-system-packages -r requirements-dev.txt; then
+                        python3 -m coverage erase
+                        python3 -m coverage run --source=app -m unittest discover -s tests -p 'test_unit_*.py'
+                        python3 -m coverage xml -o coverage.xml
+                        python3 -m coverage report
+                        test -s coverage.xml
+                    else
+                        echo 'Coverage installation unavailable; running unit tests without a coverage report.'
+                        python3 -m unittest discover -s tests -p 'test_unit_*.py'
+                    fi
                 '''
             }
         }

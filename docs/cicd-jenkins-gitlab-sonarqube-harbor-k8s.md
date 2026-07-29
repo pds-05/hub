@@ -72,7 +72,7 @@ withSonarQubeEnv('sonarqube')
 
 所以 Name 必须叫 `sonarqube`，或者你改 Jenkinsfile 里的名字。
 
-流水线会安装 `backend/requirements-dev.txt` 中的测试依赖，自动生成 Python 覆盖率报告并交给 SonarQube。参数 `ENFORCE_SONAR_GATE` 默认关闭，质量门失败时仍会继续发布；测试覆盖成熟后可在 Jenkins 构建参数中开启，让质量门重新阻断发布。
+流水线会安装 `backend/requirements-dev.txt` 中的小型测试依赖，自动生成 Python 覆盖率报告并交给 SonarQube。依赖安装设置了超时，网络异常时会退回普通单元测试，避免阻塞发布。参数 `ENFORCE_SONAR_GATE` 默认关闭，质量门失败时仍会继续发布；测试覆盖成熟后可在 Jenkins 构建参数中开启，让质量门重新阻断发布。
 
 ## 5. Harbor 镜像地址
 

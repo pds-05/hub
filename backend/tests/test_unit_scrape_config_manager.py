@@ -1,6 +1,23 @@
 import unittest
+import sys
+from types import ModuleType
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+# Keep this unit test independent from runtime packages installed in the app image.
+httpx_stub = ModuleType("httpx")
+httpx_stub.AsyncClient = object
+httpx_stub.HTTPStatusError = Exception
+httpx_stub.HTTPError = Exception
+sys.modules.setdefault("httpx", httpx_stub)
+
+config_stub = ModuleType("app.core.config")
+config_stub.get_settings = lambda: None
+sys.modules.setdefault("app.core.config", config_stub)
+
+model_stub = ModuleType("app.models.monitor_target")
+model_stub.MonitorTarget = object
+sys.modules.setdefault("app.models.monitor_target", model_stub)
 
 from app.services.scrape_config_manager import ScrapeConfigManager
 
