@@ -357,3 +357,231 @@ html, body, #root {
   grid-template-columns: repeat(5, minmax(130px, 1fr));
   margin-bottom: 4px;
 }
+
+.userGuideLauncher {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 1000;
+  width: 54px !important;
+  height: 54px !important;
+  font-size: 22px;
+  box-shadow: 0 8px 22px rgba(22, 119, 255, 0.32);
+}
+
+.userGuideDrawer .ant-drawer-body {
+  padding: 0;
+  overflow: hidden;
+}
+
+.userGuideLayout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.userGuideNav {
+  min-width: 0;
+  padding: 18px 12px;
+  overflow: auto;
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
+}
+
+.userGuideNavTitle {
+  padding: 0 8px 12px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.userGuideNav .ant-tree {
+  background: transparent;
+}
+
+.userGuideNav .ant-tree-node-content-wrapper {
+  min-height: 30px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userGuideContent {
+  min-width: 0;
+  padding: 24px 28px 36px;
+  overflow: auto;
+}
+
+.userGuideBreadcrumb {
+  margin-bottom: 14px;
+}
+
+.userGuideBreadcrumb .ant-btn-link {
+  height: auto;
+  padding: 0;
+  font-size: 13px;
+}
+
+.userGuideHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.userGuideHeading h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 24px;
+  line-height: 1.35;
+}
+
+.userGuideHeading p {
+  max-width: 720px;
+  margin: 8px 0 0;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.userGuideSection {
+  margin-top: 24px;
+}
+
+.userGuideSection h3 {
+  margin: 0 0 14px;
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.userGuideChildGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.userGuideChild {
+  position: relative;
+  min-width: 0;
+  min-height: 90px;
+  padding: 13px 38px 13px 14px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.userGuideChild:hover,
+.userGuideChild:focus-visible {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+  outline: none;
+}
+
+.userGuideChild strong,
+.userGuideChild span {
+  display: block;
+}
+
+.userGuideChild strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.userGuideChild span {
+  margin-top: 6px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.userGuideChild .anticon {
+  position: absolute;
+  top: 16px;
+  right: 14px;
+  color: #1677ff;
+}
+
+.userGuideAlert {
+  margin-top: 22px;
+}
+
+.userGuideList {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.userGuideList li + li {
+  margin-top: 6px;
+}
+
+.userGuideContent .ant-steps-item-description {
+  max-width: 760px !important;
+  color: #475569 !important;
+  line-height: 1.65;
+}
+
+.userGuideContent .ant-steps-item-title {
+  color: #0f172a !important;
+  font-weight: 650;
+}
+
+.userGuideExample {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  color: #dbeafe;
+  background: #0f172a;
+  border-radius: 6px;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .userGuideLauncher {
+    right: 18px;
+    bottom: 18px;
+    width: 48px !important;
+    height: 48px !important;
+  }
+
+  .userGuideDrawer .ant-drawer-header {
+    padding: 14px 16px;
+  }
+
+  .userGuideDrawer .ant-drawer-extra .ant-btn {
+    padding-inline: 10px;
+  }
+
+  .userGuideLayout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .userGuideNav {
+    flex: 0 0 220px;
+    border-right: 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .userGuideContent {
+    flex: 1;
+    padding: 18px 16px 28px;
+  }
+
+  .userGuideHeading h2 {
+    font-size: 20px;
+  }
+
+  .userGuideChildGrid {
+    grid-template-columns: 1fr;
+  }
+}

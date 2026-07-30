@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, ConfigProvider, Descriptions, Drawer, Empty, Form, Input, InputNumber, Layout, Menu, Popconfirm, Progress, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, message } from 'antd';
+import { Alert, Breadcrumb, Button, Card, Col, ConfigProvider, Descriptions, Drawer, Empty, Form, Input, InputNumber, Layout, Menu, Popconfirm, Progress, Row, Select, Space, Statistic, Steps, Switch, Table, Tabs, Tag, Tooltip, Tree, message } from 'antd';
 import type { SelectProps } from 'antd';
-import { AimOutlined, BarChartOutlined, CheckCircleOutlined, DashboardOutlined, LoginOutlined, MailOutlined, ProfileOutlined, ReloadOutlined, RobotOutlined, SendOutlined, SettingOutlined, WarningOutlined, HeartOutlined } from '@ant-design/icons';
+import { AimOutlined, ArrowRightOutlined, BarChartOutlined, CheckCircleOutlined, DashboardOutlined, HeartOutlined, LoginOutlined, MailOutlined, ProfileOutlined, QuestionCircleOutlined, ReadOutlined, ReloadOutlined, RobotOutlined, SendOutlined, SettingOutlined, WarningOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import TargetMetricsPanel from './TargetMetricsPanel';
+import { createGuideTreeData, findGuidePath, findGuideSection, guideSections } from './userGuide';
+import type { GuidePageKey } from './userGuide';
 import 'antd/dist/reset.css';
 import './styles.css';
 
@@ -11,7 +13,7 @@ const { Header, Content, Sider } = Layout;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
 const GRAFANA_URL = (import.meta.env.VITE_GRAFANA_URL || 'http://114.55.117.211:30080/grafana').replace(/\/$/, '');
 
-type PageKey = 'overview' | 'targets' | 'clusters' | 'rules' | 'events' | 'channels' | 'records' | 'logs' | 'assistant' | 'grafana' | 'platformHealth';
+type PageKey = GuidePageKey;
 type HandlingStatus = 'new' | 'acknowledged' | 'investigating' | 'mitigating' | 'watching' | 'resolved' | 'closed';
 type AlertEvent = { id: number; rule_name: string; scope: 'node' | 'target' | string; instance: string; level: 'general' | 'severe' | 'urgent'; metric: string; operator: string; value: number; threshold: number; status: 'active' | 'resolved'; handling_status: HandlingStatus; acknowledged: boolean; trigger_count: number; last_triggered_at: string; };
 type AlertSummary = { total_count: number; active_count: number; resolved_count: number; unacknowledged_active_count: number; handling_by_status: Record<string, number>; active_by_level: Record<string, number>; total_by_level: Record<string, number>; recent_events: AlertEvent[]; };
@@ -532,12 +534,30 @@ const pageTitles: Record<PageKey, string> = {
   grafana: 'Grafana 图表',
   platformHealth: '平台健康',};
 
+const pageGuideKeys: Record<PageKey, string> = {
+  overview: 'quick-start',
+  targets: 'targets',
+  clusters: 'clusters',
+  rules: 'rules',
+  events: 'events',
+  channels: 'channels',
+  records: 'records',
+  logs: 'logs',
+  assistant: 'assistant',
+  grafana: 'grafana',
+  platformHealth: 'platform-health',
+};
+
+const guideTreeData = createGuideTreeData(guideSections);
+
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('access_token') || '');
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [platformHealth, setPlatformHealth] = useState<PlatformHealth | null>(null);
   const [activePage, setActivePage] = useState<PageKey>('overview');
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [selectedGuideKey, setSelectedGuideKey] = useState('quick-start');
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<AlertSummary | null>(null);
   const [targetSummary, setTargetSummary] = useState<TargetSummary | null>(null);
@@ -2375,6 +2395,147 @@ export default function App() {
     return renderOverview();
   }
 
+  const selectedGuide = findGuideSection(selectedGuideKey) || guideSections[0];
+  const selectedGuidePath = findGuidePath(selectedGuide.key);
+  const visibleGuideTreeData = currentUser?.role === 'root'
+    ? guideTreeData
+    : guideTreeData.filter((item) => item.key !== 'platform-health');
+
+  function openGuideForCurrentPage() {
+    setSelectedGuideKey(pageGuideKeys[activePage]);
+    setGuideOpen(true);
+  }
+
+  function goToGuidePage() {
+    if (!selectedGuide.page) return;
+    if (selectedGuide.page === 'platformHealth' && currentUser?.role !== 'root') {
+      message.warning('平台健康仅 root 管理员可访问');
+      return;
+    }
+    setActivePage(selectedGuide.page);
+    setGuideOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  const renderUserGuide = () => (
+    <Drawer
+      title={<Space><ReadOutlined /><span>使用助手</span></Space>}
+      width="min(1080px, 100vw)"
+      open={guideOpen}
+      onClose={() => setGuideOpen(false)}
+      className="userGuideDrawer"
+      extra={selectedGuide.page ? (
+        <Button type="primary" icon={<ArrowRightOutlined />} onClick={goToGuidePage}>
+          前往该功能
+        </Button>
+      ) : null}
+    >
+      <div className="userGuideLayout">
+        <aside className="userGuideNav" aria-label="使用手册目录">
+          <div className="userGuideNavTitle">使用手册目录</div>
+          <Tree
+            blockNode
+            showLine
+            defaultExpandedKeys={['targets', 'targets-exporter']}
+            selectedKeys={[selectedGuide.key]}
+            treeData={visibleGuideTreeData}
+            onSelect={(keys) => {
+              if (keys.length) setSelectedGuideKey(String(keys[0]));
+            }}
+          />
+        </aside>
+        <main className="userGuideContent">
+          <Breadcrumb
+            className="userGuideBreadcrumb"
+            items={selectedGuidePath.map((section) => ({
+              title: (
+                <Button type="link" size="small" onClick={() => setSelectedGuideKey(section.key)}>
+                  {section.title}
+                </Button>
+              ),
+            }))}
+          />
+          <div className="userGuideHeading">
+            <div>
+              <h2>{selectedGuide.title}</h2>
+              <p>{selectedGuide.summary}</p>
+            </div>
+            {selectedGuide.rootOnly ? <Tag color="red">仅 root</Tag> : null}
+          </div>
+
+          {selectedGuide.children?.length ? (
+            <section className="userGuideSection">
+              <h3>选择细分内容</h3>
+              <div className="userGuideChildGrid">
+                {selectedGuide.children.map((child) => (
+                  <button
+                    type="button"
+                    className="userGuideChild"
+                    key={child.key}
+                    onClick={() => setSelectedGuideKey(child.key)}
+                  >
+                    <strong>{child.title}</strong>
+                    <span>{child.summary}</span>
+                    <ArrowRightOutlined />
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {selectedGuide.prerequisites?.length ? (
+            <Alert
+              className="userGuideAlert"
+              type="info"
+              showIcon
+              message="开始前请确认"
+              description={(
+                <ul className="userGuideList">
+                  {selectedGuide.prerequisites.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              )}
+            />
+          ) : null}
+
+          {selectedGuide.steps?.length ? (
+            <section className="userGuideSection">
+              <h3>操作步骤</h3>
+              <Steps
+                direction="vertical"
+                size="small"
+                current={-1}
+                items={selectedGuide.steps.map((step) => ({
+                  title: step.title,
+                  description: step.description,
+                }))}
+              />
+            </section>
+          ) : null}
+
+          {selectedGuide.example ? (
+            <section className="userGuideSection">
+              <h3>填写示例</h3>
+              <pre className="userGuideExample"><code>{selectedGuide.example}</code></pre>
+            </section>
+          ) : null}
+
+          {selectedGuide.notes?.length ? (
+            <Alert
+              className="userGuideAlert"
+              type="warning"
+              showIcon
+              message="注意事项"
+              description={(
+                <ul className="userGuideList">
+                  {selectedGuide.notes.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              )}
+            />
+          ) : null}
+        </main>
+      </div>
+    </Drawer>
+  );
   const menuItems = [
     { key: 'overview', icon: <DashboardOutlined />, label: '总览' },
     { key: 'targets', icon: <AimOutlined />, label: '监控对象' },
@@ -2434,6 +2595,18 @@ export default function App() {
           </Content>
         </Layout>
       </Layout>
+      <Tooltip title="使用助手" placement="left">
+        <Button
+          type="primary"
+          shape="circle"
+          size="large"
+          className="userGuideLauncher"
+          icon={<QuestionCircleOutlined />}
+          aria-label="打开使用助手"
+          onClick={openGuideForCurrentPage}
+        />
+      </Tooltip>
+      {renderUserGuide()}
     </ConfigProvider>
   );
 }
