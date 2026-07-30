@@ -592,13 +592,25 @@ export default function App() {
     return findGrafanaDashboard(keywordGroups)?.url || fallbackPath;
   }
 
-  function openTargetGrafana(target: MonitorTarget) {
-    const view = grafanaViews?.targets.find((item) => item.target_id === target.id);
-    if (view?.url) {
-      openGrafana(view.url);
-      return;
+  async function openTargetGrafana(target: MonitorTarget) {
+    if (!token) return;
+    const popup = window.open('about:blank', '_blank');
+    if (popup) popup.opener = null;
+    try {
+      const result = await request<{ dashboard_url: string }>(`/grafana/targets/${target.id}/provision`, token, {
+        method: 'POST',
+        body: '{}',
+      });
+      if (popup) {
+        popup.location.href = result.dashboard_url;
+      } else {
+        window.location.href = result.dashboard_url;
+      }
+      void loadAll();
+    } catch (error) {
+      popup?.close();
+      handleRequestError(error, '打开 Grafana 仪表盘失败');
     }
-    message.info('专属仪表盘还未创建，请先点击“同步 Grafana”。');
   }
 
   function openAlertGrafana(event: AlertEvent) {
@@ -623,7 +635,7 @@ export default function App() {
       openGrafana(grafanaDashboardPath([['alertmanager']]));
       return;
     }
-    openGrafana(grafanaDashboardPath([['cluster', '集群', '多集群'], ['compute', '计算资源']], '/d/efa86fd1d0c121a26444b636a3f509a8/kubernetes-compute-resources-cluster?orgId=1&refresh=10s'));
+    openGrafana(grafanaDashboardPath([['cluster', '集群', '多集群'], ['compute', '计算资源']]));
   }
 
   const chartOption = useMemo(() => ({
@@ -1504,7 +1516,7 @@ export default function App() {
     { title: 'HTTP', render: (_: unknown, row: MonitorTarget) => targetChecks[row.id]?.status_code ?? '-' },
     { title: '消息', render: (_: unknown, row: MonitorTarget) => targetChecks[row.id]?.message || '-', ellipsis: true },
     { title: '检测时间', render: (_: unknown, row: MonitorTarget) => targetChecks[row.id]?.checked_at ? new Date(targetChecks[row.id]!.checked_at).toLocaleString() : '-' },
-    { title: '操作', fixed: 'right' as const, render: (_: unknown, row: MonitorTarget) => <Space><Button size="small" onClick={() => { setSelectedTargetId(row.id); void loadTargetHistory(row.id); }}>查看</Button><Button size="small" onClick={() => checkTarget(row)}>检测</Button><Button size="small" icon={<BarChartOutlined />} onClick={() => openTargetGrafana(row)}>Grafana</Button><Popconfirm title="确认删除这个监控对象？" onConfirm={() => deleteTarget(row)}><Button danger size="small">删除</Button></Popconfirm></Space> },
+    { title: '操作', fixed: 'right' as const, render: (_: unknown, row: MonitorTarget) => <Space><Button size="small" onClick={() => { setSelectedTargetId(row.id); void loadTargetHistory(row.id); }}>查看</Button><Button size="small" onClick={() => checkTarget(row)}>检测</Button><Button size="small" icon={<BarChartOutlined />} onClick={() => void openTargetGrafana(row)}>Grafana</Button><Popconfirm title="确认删除这个监控对象？" onConfirm={() => deleteTarget(row)}><Button danger size="small">删除</Button></Popconfirm></Space> },
   ];
 
   const renderOverview = () => (
@@ -2097,7 +2109,10 @@ export default function App() {
                         <Tag color="orange">等待自动创建仪表盘</Tag>
                       )}
                     </div>
-                    <Button type="primary" icon={<BarChartOutlined />} disabled={!view.url} onClick={() => openGrafana(view.url)}>
+                    <Button type="primary" icon={<BarChartOutlined />} onClick={() => {
+                      const target = targets.find((item) => item.id === view.target_id);
+                      if (target) void openTargetGrafana(target);
+                    }}>
                       打开专属图表
                     </Button>
                   </Space>

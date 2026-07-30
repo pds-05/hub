@@ -1,4 +1,5 @@
 import httpx
+from urllib.parse import urlsplit
 
 from app.core.config import get_settings
 from app.services.grafana_runtime import get_api_token
@@ -28,6 +29,15 @@ class GrafanaClient:
         if not token:
             return {}
         return {"Authorization": f"Bearer {token}"}
+
+    def dashboard_public_url(self, path: str) -> str:
+        if path.startswith(("http://", "https://")):
+            return path
+        normalized_path = path if path.startswith("/") else f"/{path}"
+        public_path = urlsplit(self.public_url).path.rstrip("/")
+        if public_path and (normalized_path == public_path or normalized_path.startswith(f"{public_path}/")):
+            normalized_path = normalized_path[len(public_path):] or "/"
+        return f"{self.public_url}{normalized_path}"
 
     async def dashboards(self, query: str | None = None, limit: int = 200) -> list[dict]:
         params = {"type": "dash-db", "limit": limit}
@@ -61,7 +71,7 @@ class GrafanaClient:
                     "title": row.get("title") or "Untitled dashboard",
                     "uri": row.get("uri"),
                     "url": url,
-                    "full_url": f"{self.public_url}{url}",
+                    "full_url": self.dashboard_public_url(url),
                     "folder_id": row.get("folderId"),
                     "folder_uid": row.get("folderUid"),
                     "folder_title": row.get("folderTitle") or "General",

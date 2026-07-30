@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     kubernetes_service_account_ca_path: str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
     alertmanager_url: str = "http://monitoring-ack-prometheus-alertmanager.monitoring.svc:9093"
     loki_url: str = "http://loki-gateway.logging.svc.cluster.local"
-    grafana_url: str = "http://monitoring-grafana.monitoring.svc.cluster.local:80"
+    grafana_url: str = "http://monitoring-grafana.monitoring.svc.cluster.local:80/grafana"
     grafana_public_url: str = "http://114.55.117.211:30080/grafana"
     grafana_api_key: str = ""
     grafana_admin_user: str = ""

@@ -244,6 +244,7 @@ pipeline {
                                   GF_AUTH_ANONYMOUS_ENABLED=false
 
                                 kubectl apply -f k8s/grafana-nodeport.yaml
+                                kubectl -n monitoring rollout status deployment/monitoring-grafana --timeout=180s
 
                                 kubectl -n "$K8S_NAMESPACE" patch deployment monitor-backend \
                                   --type merge \
@@ -261,6 +262,7 @@ pipeline {
                                   TARGET_ALERT_EVALUATION_ENABLED=true \
                                   TARGET_ALERT_EVALUATION_INTERVAL_SECONDS=60 \
                                   BLACKBOX_EXPORTER_URL=http://blackbox-exporter.monitoring.svc.cluster.local:9115 \
+                                  GRAFANA_URL=http://monitoring-grafana.monitoring.svc.cluster.local:80/grafana \
                                   GRAFANA_PUBLIC_URL="$GRAFANA_PUBLIC_URL" \
                                   GRAFANA_PROVISIONING_ENABLED=true \
                                   GRAFANA_DATA_PROXY_URL=http://monitor-backend.platform.svc.cluster.local:8000/api/v1/grafana/proxy \
@@ -272,7 +274,6 @@ pipeline {
                                   monitor-frontend="$FRONTEND_IMAGE:$IMAGE_TAG"
 
                                 kubectl -n monitoring rollout status deployment/blackbox-exporter --timeout=180s
-                                kubectl -n monitoring rollout status deployment/monitoring-grafana --timeout=180s
                                 kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-frontend GRAFANA_PROXY_CONFIG=v1
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s
@@ -289,6 +290,7 @@ pipeline {
                                 kubectl -n monitoring delete service monitoring-grafana-nodeport --ignore-not-found
                                 test -z "$(kubectl -n monitoring get service monitoring-grafana-nodeport --ignore-not-found -o name)"
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import os; assert os.environ.get("GRAFANA_PUBLIC_URL") == "http://114.55.117.211:30080/grafana"'
+                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import urllib.request; assert urllib.request.urlopen("http://monitoring-grafana.monitoring.svc.cluster.local:80/grafana/api/health", timeout=10).status == 200'
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import urllib.request; assert urllib.request.urlopen("http://blackbox-exporter.monitoring.svc.cluster.local:9115/-/healthy", timeout=10).status == 200'
                             '''
                         } catch (error) {
@@ -300,7 +302,6 @@ pipeline {
                                 kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-frontend \
                                   monitor-frontend="$PREVIOUS_FRONTEND_IMAGE" || true
                                 kubectl -n monitoring rollout status deployment/blackbox-exporter --timeout=180s
-                                kubectl -n monitoring rollout status deployment/monitoring-grafana --timeout=180s
                                 kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-frontend GRAFANA_PROXY_CONFIG=v1
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s || true
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s || true

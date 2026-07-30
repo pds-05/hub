@@ -239,6 +239,29 @@ async def provision_grafana(
     return {"count": len(created), "dashboards": created}
 
 
+@router.post("/targets/{target_id}/provision")
+async def provision_target_dashboard(
+    target_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    target = (
+        db.query(MonitorTarget)
+        .filter(
+            MonitorTarget.id == target_id,
+            MonitorTarget.user_id == current_user.id,
+            MonitorTarget.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="监控对象不存在")
+    try:
+        result = await GrafanaProvisioner().ensure_target_dashboard(db, target, current_user)
+    except GrafanaProvisioningError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"target_id": target.id, "dashboard_url": result.url, "uid": result.uid}
+
 @router.get("/dashboards")
 async def list_grafana_dashboards(
     query: str | None = Query(default=None, max_length=100),

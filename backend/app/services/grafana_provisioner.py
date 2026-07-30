@@ -6,6 +6,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from sqlalchemy.orm import Session
@@ -49,6 +50,13 @@ class GrafanaProvisioner:
     @staticmethod
     def grafana_login(user: User) -> str:
         return f"platform-user-{user.id}"
+
+    @staticmethod
+    def dashboard_public_url(public_url: str, uid: str, org_id: int) -> str:
+        """Build a stable URL from the dashboard UID instead of Grafana's display slug."""
+        base_url = public_url.rstrip("/")
+        query = urlencode({"orgId": org_id, "refresh": "30s", "kiosk": "1"})
+        return f"{base_url}/d/{uid}/monitor-platform-target?{query}"
 
     async def _admin_credentials(self) -> tuple[str, str]:
         if self._admin_credentials_cache is not None:
@@ -511,9 +519,7 @@ class GrafanaProvisioner:
             },
         )
         self._raise_for_grafana(response, "创建 Grafana Target 仪表盘")
-        response_url = str(response.json().get("url") or f"/d/{uid}")
-        separator = "&" if "?" in response_url else "?"
-        dashboard_url = f"{self.public_url}{response_url}{separator}orgId={org_id}&refresh=30s&kiosk=1"
+        dashboard_url = self.dashboard_public_url(self.public_url, uid, org_id)
 
         record = db.query(GrafanaTargetDashboard).filter(GrafanaTargetDashboard.target_id == target.id).first()
         if record is None:

@@ -59,6 +59,15 @@ class GrafanaProvisionerTest(unittest.TestCase):
         user = SimpleNamespace(id=7, username="alice")
         self.assertEqual(GrafanaProvisioner.grafana_login(user), "platform-user-7")
 
+    def test_dashboard_public_url_uses_stable_uid_path(self) -> None:
+        url = GrafanaProvisioner.dashboard_public_url("http://platform/grafana/", "mp-t-7-19", 17)
+
+        self.assertEqual(
+            url,
+            "http://platform/grafana/d/mp-t-7-19/monitor-platform-target?orgId=17&refresh=30s&kiosk=1",
+        )
+
+
     def test_regular_user_datasources_use_scoped_backend_proxy(self) -> None:
         provisioner = GrafanaProvisioner()
         user = SimpleNamespace(id=7, role="user")
