@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Col, ConfigProvider, Descriptions, Drawer, Empty, Form, Input, InputNumber, Layout, Menu, Popconfirm, Progress, Row, Select, Space, Statistic, Switch, Table, Tag, message } from 'antd';
+import { Alert, Button, Card, Col, ConfigProvider, Descriptions, Drawer, Empty, Form, Input, InputNumber, Layout, Menu, Popconfirm, Progress, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, message } from 'antd';
 import type { SelectProps } from 'antd';
 import { AimOutlined, BarChartOutlined, CheckCircleOutlined, DashboardOutlined, LoginOutlined, MailOutlined, ProfileOutlined, ReloadOutlined, RobotOutlined, SendOutlined, SettingOutlined, WarningOutlined, HeartOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
@@ -43,6 +43,29 @@ type ManagedCluster = { id: number; user_id: number; name: string; provider: str
 type ManagedClusterInstall = { cluster_id: number; agent_token: string; platform_api_url: string; install_command: string; manifest: string; };
 type ClusterAgentHeartbeat = { id: number; cluster_id: number; status: string; agent_version?: string | null; node_count: number; pod_count: number; message?: string | null; payload: Record<string, unknown>; created_at: string; };
 type ClusterAgentReport = { id: number; cluster_id: number; report_type: 'metric' | 'log' | 'alert'; source?: string | null; level?: string | null; message?: string | null; payload: Record<string, unknown>; created_at: string; };
+type ClusterNodeState = { name: string; roles: string[]; ready: boolean; internal_ip?: string | null; kubelet_version?: string; container_runtime?: string; os_image?: string; kernel_version?: string; pod_count: number; taints: string[]; cpu_capacity_cores?: number; memory_capacity_bytes?: number; cpu_request_cores?: number; cpu_limit_cores?: number; memory_request_bytes?: number; memory_limit_bytes?: number; cpu_usage_cores?: number; memory_usage_bytes?: number; cpu_usage_percent?: number | null; memory_usage_percent?: number | null; cpu_request_percent?: number | null; memory_request_percent?: number | null; };
+type ClusterWorkloadState = { kind: string; namespace: string; name: string; desired_replicas: number; available_replicas: number; unavailable_replicas: number; };
+type ClusterPodState = { namespace: string; name: string; node?: string | null; phase: string; ready: boolean; restarts: number; waiting_reasons: string[]; containers: string[]; cpu_request_cores?: number; cpu_limit_cores?: number; memory_request_bytes?: number; memory_limit_bytes?: number; cpu_usage_cores?: number; memory_usage_bytes?: number; };
+type ClusterWarningEvent = { namespace: string; reason: string; message: string; resource_kind?: string; resource_name?: string; count: number; time?: string; };
+type ClusterStorageItem = { name: string; namespace?: string; phase?: string; capacity?: string | null; storage_class?: string | null; volume?: string | null; };
+type ClusterIngressState = { namespace: string; name: string; class?: string | null; hosts: string[]; };
+type ClusterServiceState = { namespace: string; name: string; type?: string; cluster_ip?: string | null; external_ips?: string[]; has_endpoints?: boolean; };
+type ClusterSnapshot = {
+  collected_at?: string;
+  cluster?: { name?: string; kubernetes_version?: string | null; node_count?: number; ready_node_count?: number; node_online_rate?: number; namespace_count?: number; runtime_summary?: string[]; os_summary?: string[] };
+  pod_summary?: { total?: number; running?: number; pending?: number; failed?: number; succeeded?: number; unknown?: number; crash_loop_backoff?: number; image_pull_backoff?: number };
+  workload_summary?: { deployment_count?: number; statefulset_count?: number; daemonset_count?: number; abnormal_count?: number };
+  nodes?: ClusterNodeState[];
+  workloads?: { deployments?: ClusterWorkloadState[]; statefulsets?: ClusterWorkloadState[]; daemonsets?: ClusterWorkloadState[] };
+  problem_pods?: ClusterPodState[];
+  top_restarts?: ClusterPodState[];
+  resource_summary?: { metrics_available?: boolean; metrics_error?: string | null; top_cpu_nodes?: ClusterNodeState[]; top_memory_nodes?: ClusterNodeState[]; top_cpu_request_nodes?: ClusterNodeState[]; top_memory_request_nodes?: ClusterNodeState[]; top_cpu_pods?: ClusterPodState[]; top_memory_pods?: ClusterPodState[]; top_cpu_request_pods?: ClusterPodState[]; top_memory_request_pods?: ClusterPodState[] };
+  storage?: { pv_count?: number; pvc_count?: number; pv_status?: Record<string, number>; pvc_status?: Record<string, number>; persistent_volumes?: ClusterStorageItem[]; persistent_volume_claims?: ClusterStorageItem[] };
+  network?: { service_count?: number; ingress_count?: number; services?: ClusterServiceState[]; services_without_endpoints?: ClusterServiceState[]; ingresses?: ClusterIngressState[] };
+  warning_events?: ClusterWarningEvent[];
+  errors?: string[];
+};
+type ClusterOverview = { cluster: ManagedCluster; heartbeat?: ClusterAgentHeartbeat | null; snapshot: ClusterSnapshot; alerts: ClusterAgentReport[]; logs: ClusterAgentReport[]; };
 
 type AIAnalysis = {
   enabled: boolean;
@@ -148,10 +171,27 @@ function displayText(value: string) {
 }
 
 function statusColor(status: string) {
-  if (status === 'up' || status === 'sent' || status === 'resolved') return 'green';
-  if (status === 'down' || status === 'failed' || status === 'active') return 'red';
+  if (status === 'up' || status === 'sent' || status === 'resolved' || status === 'online' || status === 'Running' || status === 'Bound') return 'green';
+  if (status === 'down' || status === 'failed' || status === 'active' || status === 'Failed') return 'red';
   if (status === 'skipped') return 'default';
   return 'gold';
+}
+
+function formatBytes(value?: number | null) {
+  if (value === null || value === undefined) return '-';
+  if (value < 1024) return `${value.toFixed(0)} B`;
+  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let current = value / 1024;
+  let index = 0;
+  while (current >= 1024 && index < units.length - 1) {
+    current /= 1024;
+    index += 1;
+  }
+  return `${current.toFixed(current >= 100 ? 0 : current >= 10 ? 1 : 2)} ${units[index]}`;
+}
+
+function formatPercent(value?: number | null) {
+  return value === null || value === undefined ? '-' : `${value.toFixed(1)}%`;
 }
 
 const handlingStatuses: { label: string; value: HandlingStatus }[] = [
@@ -510,8 +550,11 @@ export default function App() {
   const [clusters, setClusters] = useState<ManagedCluster[]>([]);
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
   const [clusterInstall, setClusterInstall] = useState<ManagedClusterInstall | null>(null);
-  const [clusterHeartbeats, setClusterHeartbeats] = useState<ClusterAgentHeartbeat[]>([]);
-  const [clusterReports, setClusterReports] = useState<ClusterAgentReport[]>([]);
+  const [clusterOverview, setClusterOverview] = useState<ClusterOverview | null>(null);
+  const [clusterLogNamespace, setClusterLogNamespace] = useState<string>();
+  const [clusterLogPod, setClusterLogPod] = useState<string>();
+  const [clusterLogContainer, setClusterLogContainer] = useState<string>();
+  const [clusterLogKeyword, setClusterLogKeyword] = useState('');
   const [targetChecks, setTargetChecks] = useState<Record<number, TargetCheck | undefined>>({});
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const [selectedTargetChecks, setSelectedTargetChecks] = useState<TargetCheck[]>([]);
@@ -926,8 +969,7 @@ export default function App() {
       } else if (nextClusters.length === 0) {
         setSelectedClusterId(null);
         setClusterInstall(null);
-        setClusterHeartbeats([]);
-        setClusterReports([]);
+        setClusterOverview(null);
       }
     } catch (error) {
       handleRequestError(error, '加载失败');
@@ -1061,17 +1103,23 @@ export default function App() {
     }
   }
 
+  async function refreshClusterOverview(clusterId: number) {
+    if (!token) return;
+    const overview = await request<ClusterOverview>(`/clusters/${clusterId}/overview`, token);
+    setClusterOverview(overview);
+    setClusters((current) => current.map((cluster) => cluster.id === clusterId ? overview.cluster : cluster));
+  }
+
   async function loadClusterDetails(clusterId: number) {
     if (!token) return;
     try {
-      const [install, heartbeats, reports] = await Promise.all([
+      const [install, overview] = await Promise.all([
         request<ManagedClusterInstall>(`/clusters/${clusterId}/install`, token),
-        request<ClusterAgentHeartbeat[]>(`/clusters/${clusterId}/heartbeats?limit=20`, token),
-        request<ClusterAgentReport[]>(`/clusters/${clusterId}/reports?limit=50`, token),
+        request<ClusterOverview>(`/clusters/${clusterId}/overview`, token),
       ]);
       setClusterInstall(install);
-      setClusterHeartbeats(heartbeats);
-      setClusterReports(reports);
+      setClusterOverview(overview);
+      setClusters((current) => current.map((cluster) => cluster.id === clusterId ? overview.cluster : cluster));
     } catch (error) {
       handleRequestError(error, '加载集群详情失败');
     }
@@ -1085,8 +1133,7 @@ export default function App() {
       if (selectedClusterId === cluster.id) {
         setSelectedClusterId(null);
         setClusterInstall(null);
-        setClusterHeartbeats([]);
-        setClusterReports([]);
+        setClusterOverview(null);
       }
       await loadAll();
     } catch (error) {
@@ -1445,6 +1492,12 @@ export default function App() {
   useEffect(() => { void loadAll(); }, [token]);
 
   useEffect(() => {
+    if (!token || activePage !== 'clusters' || !selectedClusterId) return;
+    const timer = window.setInterval(() => { void refreshClusterOverview(selectedClusterId).catch(() => undefined); }, 30000);
+    return () => window.clearInterval(timer);
+  }, [token, activePage, selectedClusterId]);
+
+  useEffect(() => {
     if (token && currentUser?.role === 'root') void loadPlatformHealth();
     if (currentUser && currentUser.role !== 'root' && activePage === 'platformHealth') setActivePage('overview');
   }, [token, currentUser?.role, activePage]);
@@ -1573,6 +1626,72 @@ export default function App() {
 
 
   const selectedCluster = clusters.find((cluster) => cluster.id === selectedClusterId) || null;
+  const clusterSnapshot = clusterOverview?.snapshot || {};
+  const clusterState = clusterSnapshot.cluster || {};
+  const clusterPodSummary = clusterSnapshot.pod_summary || {};
+  const clusterWorkloadSummary = clusterSnapshot.workload_summary || {};
+  const clusterNodes = clusterSnapshot.nodes || [];
+  const clusterWorkloads = [
+    ...(clusterSnapshot.workloads?.deployments || []),
+    ...(clusterSnapshot.workloads?.statefulsets || []),
+    ...(clusterSnapshot.workloads?.daemonsets || []),
+  ];
+  const clusterProblemPods = clusterSnapshot.problem_pods || [];
+  const clusterTopRestarts = clusterSnapshot.top_restarts || [];
+  const clusterActiveAlerts = (clusterOverview?.alerts || []).filter((report) => report.payload.status === 'active');
+  const clusterLogNamespaces = Array.from(new Set((clusterOverview?.logs || []).map((report) => String(report.payload.namespace || '')).filter(Boolean))).sort();
+  const clusterLogPods = Array.from(new Set((clusterOverview?.logs || [])
+    .filter((report) => !clusterLogNamespace || String(report.payload.namespace || '') === clusterLogNamespace)
+    .map((report) => String(report.payload.pod || '')).filter(Boolean))).sort();
+  const clusterLogContainers = Array.from(new Set((clusterOverview?.logs || [])
+    .filter((report) => !clusterLogNamespace || String(report.payload.namespace || '') === clusterLogNamespace)
+    .filter((report) => !clusterLogPod || String(report.payload.pod || '') === clusterLogPod)
+    .map((report) => String(report.payload.container || '')).filter(Boolean))).sort();
+  const filteredClusterLogs = (clusterOverview?.logs || []).filter((report) => {
+    if (clusterLogNamespace && String(report.payload.namespace || '') !== clusterLogNamespace) return false;
+    if (clusterLogPod && String(report.payload.pod || '') !== clusterLogPod) return false;
+    if (clusterLogContainer && String(report.payload.container || '') !== clusterLogContainer) return false;
+    const keyword = clusterLogKeyword.trim().toLowerCase();
+    return !keyword || `${report.message || ''} ${report.source || ''}`.toLowerCase().includes(keyword);
+  });
+
+  const nodeColumns = [
+    { title: '节点', dataIndex: 'name', fixed: 'left' as const, width: 180 },
+    { title: '角色', dataIndex: 'roles', width: 130, render: (value: string[]) => (value || []).map((role) => <Tag key={role}>{role}</Tag>) },
+    { title: '状态', dataIndex: 'ready', width: 90, render: (value: boolean) => <Tag color={value ? 'green' : 'red'}>{value ? 'Ready' : 'NotReady'}</Tag> },
+    { title: '内网 IP', dataIndex: 'internal_ip', width: 140, render: (value: string | null) => value || '-' },
+    { title: 'CPU 使用', dataIndex: 'cpu_usage_percent', width: 150, render: (value: number | null) => value === null || value === undefined ? '-' : <Progress percent={value} size="small" status={value >= 90 ? 'exception' : 'normal'} /> },
+    { title: '内存使用', dataIndex: 'memory_usage_percent', width: 150, render: (value: number | null) => value === null || value === undefined ? '-' : <Progress percent={value} size="small" status={value >= 90 ? 'exception' : 'normal'} /> },
+    { title: 'CPU Requests', dataIndex: 'cpu_request_percent', width: 130, render: (value: number | null) => formatPercent(value) },
+    { title: 'CPU Limits', dataIndex: 'cpu_limit_cores', width: 110, render: (value: number | null) => value ? `${value} 核` : '-' },
+    { title: '内存 Requests', dataIndex: 'memory_request_percent', width: 130, render: (value: number | null) => formatPercent(value) },
+    { title: '内存 Limits', dataIndex: 'memory_limit_bytes', width: 120, render: (value: number | null) => value ? formatBytes(value) : '-' },
+    { title: 'Pod 数', dataIndex: 'pod_count', width: 90 },
+    { title: '污点', dataIndex: 'taints', width: 220, render: (value: string[]) => value?.length ? value.join(', ') : '-' },
+    { title: '运行时', dataIndex: 'container_runtime', width: 210, ellipsis: true },
+    { title: '系统版本', dataIndex: 'os_image', width: 210, ellipsis: true },
+    { title: '内核', dataIndex: 'kernel_version', width: 180, ellipsis: true },
+  ];
+
+  const workloadColumns = [
+    { title: '类型', dataIndex: 'kind', width: 120, render: (value: string) => <Tag>{value}</Tag> },
+    { title: '命名空间', dataIndex: 'namespace', width: 160 },
+    { title: '名称', dataIndex: 'name', ellipsis: true },
+    { title: '期望副本', dataIndex: 'desired_replicas', width: 110 },
+    { title: '可用副本', dataIndex: 'available_replicas', width: 110 },
+    { title: '异常副本', dataIndex: 'unavailable_replicas', width: 110, render: (value: number) => <Tag color={value > 0 ? 'red' : 'green'}>{value}</Tag> },
+  ];
+
+  const podColumns = [
+    { title: '命名空间', dataIndex: 'namespace', width: 150 },
+    { title: 'Pod', dataIndex: 'name', ellipsis: true },
+    { title: '节点', dataIndex: 'node', width: 170, render: (value: string | null) => value || '-' },
+    { title: '阶段', dataIndex: 'phase', width: 100, render: (value: string) => <Tag color={statusColor(value)}>{value}</Tag> },
+    { title: '异常原因', dataIndex: 'waiting_reasons', width: 190, render: (value: string[]) => value?.length ? value.map((reason) => <Tag color="red" key={reason}>{reason}</Tag>) : '-' },
+    { title: '重启', dataIndex: 'restarts', width: 90, sorter: (a: ClusterPodState, b: ClusterPodState) => a.restarts - b.restarts },
+    { title: 'CPU', dataIndex: 'cpu_usage_cores', width: 100, render: (value: number | undefined) => value === undefined ? '-' : `${value.toFixed(3)} 核` },
+    { title: '内存', dataIndex: 'memory_usage_bytes', width: 110, render: (value: number | undefined) => formatBytes(value) },
+  ];
 
   const renderClusters = () => (
     <>
@@ -1584,7 +1703,7 @@ export default function App() {
               <Form.Item name="provider" label="类型" rules={[{ required: true }]}><Select options={[{ label: 'Kubernetes', value: 'kubernetes' }, { label: 'ACK / 阿里云 K8s', value: 'ack' }, { label: '自建 K8s', value: 'self-hosted' }]} /></Form.Item>
               <Form.Item name="api_server" label="API Server"><Input placeholder="可选，例如：https://10.0.0.1:6443" /></Form.Item>
               <Form.Item name="description" label="说明"><Input.TextArea rows={3} placeholder="可选，填写集群用途、负责人或网络说明" /></Form.Item>
-              <Alert type="info" showIcon message="添加后会生成 Agent 安装命令。把命令复制到被监控集群执行，Agent 会采集节点、Pod、日志摘要并定时上报心跳。" />
+              <Alert type="info" showIcon message="添加后会生成 Agent 安装命令。Agent 会持续上报集群当前状态、异常事件和异常 Pod 日志。" />
               <Button type="primary" htmlType="submit">保存集群</Button>
             </Form>
           </Card>
@@ -1596,67 +1715,136 @@ export default function App() {
               dataSource={clusters}
               size="small"
               pagination={{ pageSize: 8 }}
-              scroll={{ x: 1100 }}
+              scroll={{ x: 1050 }}
               rowClassName={(row) => row.id === selectedClusterId ? 'selectedRow' : ''}
               columns={[
                 { title: '名称', dataIndex: 'name', ellipsis: true },
                 { title: '类型', dataIndex: 'provider', render: (value: string) => <Tag>{value}</Tag> },
-                { title: '状态', dataIndex: 'status', render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'deleted' ? 'default' : 'gold'}>{value === 'online' ? '在线' : value === 'pending' ? '待安装' : value}</Tag> },
-                { title: '节点 / Pod', render: (_: unknown, row: ManagedCluster) => `${row.node_count} / ${row.pod_count}` },
-                { title: '上报', render: (_: unknown, row: ManagedCluster) => `指标 ${row.metrics_count} / 日志 ${row.logs_count} / 告警 ${row.alerts_count}` },
-                { title: '最后心跳', render: (_: unknown, row: ManagedCluster) => row.last_heartbeat_at ? new Date(row.last_heartbeat_at).toLocaleString() : '-' },
-                { title: '操作', fixed: 'right' as const, render: (_: unknown, row: ManagedCluster) => <Space><Button size="small" onClick={() => { setSelectedClusterId(row.id); void loadClusterDetails(row.id); }}>查看</Button><Button size="small" onClick={() => rotateClusterToken(row)}>重置 Token</Button><Popconfirm title="确认删除这个集群？" onConfirm={() => deleteCluster(row)}><Button danger size="small">删除</Button></Popconfirm></Space> },
+                { title: 'Agent', dataIndex: 'status', render: (value: string) => <Tag color={value === 'online' ? 'green' : value === 'degraded' ? 'orange' : 'gold'}>{value === 'online' ? '在线' : value === 'degraded' ? '部分异常' : value === 'pending' ? '待安装' : value}</Tag> },
+                { title: '当前节点 / Pod', render: (_: unknown, row: ManagedCluster) => `${row.node_count} / ${row.pod_count}` },
+                { title: '当前告警', dataIndex: 'alerts_count', render: (value: number) => <Tag color={value > 0 ? 'red' : 'green'}>{value}</Tag> },
+                { title: '最后更新', render: (_: unknown, row: ManagedCluster) => row.last_heartbeat_at ? new Date(row.last_heartbeat_at).toLocaleString() : '-' },
+                { title: '操作', fixed: 'right' as const, width: 250, render: (_: unknown, row: ManagedCluster) => <Space><Button size="small" onClick={() => { setSelectedClusterId(row.id); void loadClusterDetails(row.id); }}>查看</Button><Button size="small" onClick={() => rotateClusterToken(row)}>重置 Token</Button><Popconfirm title="确认删除这个集群？" onConfirm={() => deleteCluster(row)}><Button danger size="small">删除</Button></Popconfirm></Space> },
               ]}
             />
           </Card>
         </Col>
       </Row>
-      <Row gutter={[16, 16]} className="section">
-        <Col xs={24} lg={10}>
-          <Card title="Agent 安装命令" extra={selectedCluster ? <Tag>{selectedCluster.name}</Tag> : null}>
-            {selectedCluster && clusterInstall ? (
-              <Space direction="vertical" className="fullWidth" size={12}>
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="执行前检查平台 API 地址"
-                  description={
-                    <>
-                      当前命令使用 <code>{clusterInstall.platform_api_url}</code>。通常无需修改；如果被监控集群无法访问该地址，或平台使用了其他域名、HTTPS、端口或 NAT 地址，请在命令中找到 <code>PLATFORM_API_URL</code> 并替换为该集群可访问的完整地址，且保留 <code>/api/v1</code>。执行前可访问 <code>{clusterInstall.platform_api_url}/health</code> 验证连通性。
-                    </>
-                  }
-                />
-                <Input.TextArea value={clusterInstall.install_command} rows={16} readOnly />
-                <Space>
-                  <Button onClick={() => copyText(clusterInstall.install_command).then(() => message.success('已复制安装命令')).catch((error: Error) => message.error('复制失败：' + error.message))}>复制命令</Button>
-                  <Button onClick={() => loadClusterDetails(selectedCluster.id)}>刷新详情</Button>
-                </Space>
-              </Space>
-            ) : <Empty description="请选择集群" />}
-          </Card>
-        </Col>
-        <Col xs={24} lg={14}>
-          <Card title="Agent 最近心跳">
-            <Table rowKey="id" dataSource={clusterHeartbeats} size="small" pagination={{ pageSize: 6 }} columns={[
-              { title: '时间', dataIndex: 'created_at', render: (value: string) => new Date(value).toLocaleString() },
-              { title: '状态', dataIndex: 'status', render: (value: string) => <Tag color={value === 'online' ? 'green' : 'gold'}>{value}</Tag> },
-              { title: '版本', dataIndex: 'agent_version', render: (value: string | null) => value || '-' },
-              { title: '节点', dataIndex: 'node_count' },
-              { title: 'Pod', dataIndex: 'pod_count' },
-              { title: '消息', dataIndex: 'message', ellipsis: true },
-            ]} />
-          </Card>
-        </Col>
-      </Row>
-      <Card className="section" title="Agent 上报数据">
-        <Table rowKey="id" dataSource={clusterReports} size="small" pagination={{ pageSize: 10 }} scroll={{ x: 1000 }} columns={[
-          { title: '时间', dataIndex: 'created_at', render: (value: string) => new Date(value).toLocaleString() },
-          { title: '类型', dataIndex: 'report_type', render: (value: string) => <Tag>{value === 'metric' ? '指标' : value === 'log' ? '日志' : '告警'}</Tag> },
-          { title: '来源', dataIndex: 'source', ellipsis: true },
-          { title: '等级', dataIndex: 'level', render: (value: string | null) => value ? <Tag color={levelColor(value)}>{displayText(value)}</Tag> : '-' },
-          { title: '消息', dataIndex: 'message', ellipsis: true },
-          { title: '原始内容', dataIndex: 'payload', render: (value: Record<string, unknown>) => JSON.stringify(value), ellipsis: true },
-        ]} />
+
+      <Card
+        className="section clusterWorkspace"
+        title={selectedCluster ? `${selectedCluster.name} - 集群监控` : '集群监控'}
+        extra={selectedCluster ? <Space><Tag color={clusterOverview?.heartbeat?.status === 'online' ? 'green' : 'orange'}>{clusterOverview?.heartbeat?.status === 'online' ? 'Agent 在线' : clusterOverview?.heartbeat?.status || '待上报'}</Tag><Button icon={<ReloadOutlined />} onClick={() => loadClusterDetails(selectedCluster.id)}>刷新</Button></Space> : null}
+      >
+        {!selectedCluster ? <Empty description="请选择集群" /> : !clusterOverview?.snapshot?.collected_at ? (
+          <Alert type="warning" showIcon message="尚未收到集群快照" description="请在被监控集群执行 Agent 安装命令；已安装旧版 Agent 时，请重新应用新命令或重启 Agent Deployment。" />
+        ) : (
+          <>
+            <div className="clusterSnapshotHeader">
+              <span>当前状态时间：{clusterSnapshot.collected_at ? new Date(clusterSnapshot.collected_at).toLocaleString() : '-'}</span>
+              <span>Agent：{clusterOverview.heartbeat?.agent_version || '-'}</span>
+              <span>{clusterOverview.heartbeat?.message || 'Agent 正常运行'}</span>
+            </div>
+            {clusterSnapshot.errors?.length ? <Alert className="clusterDataAlert" type="warning" showIcon message="部分数据未采集" description={clusterSnapshot.errors.join('；')} /> : null}
+            <Tabs
+              defaultActiveKey="overview"
+              items={[
+                {
+                  key: 'overview',
+                  label: '集群总览',
+                  children: <>
+                    <div className="clusterStatGrid">
+                      <div className="clusterStat"><Statistic title="节点在线率" value={clusterState.node_online_rate || 0} suffix="%" /></div>
+                      <div className="clusterStat"><Statistic title="节点" value={clusterState.ready_node_count || 0} suffix={`/ ${clusterState.node_count || 0}`} /></div>
+                      <div className="clusterStat"><Statistic title="命名空间" value={clusterState.namespace_count || 0} /></div>
+                      <div className="clusterStat"><Statistic title="运行中 Pod" value={clusterPodSummary.running || 0} suffix={`/ ${clusterPodSummary.total || 0}`} /></div>
+                      <div className="clusterStat"><Statistic title="异常工作负载" value={clusterWorkloadSummary.abnormal_count || 0} valueStyle={{ color: (clusterWorkloadSummary.abnormal_count || 0) > 0 ? '#cf1322' : '#389e0d' }} /></div>
+                      <div className="clusterStat"><Statistic title="当前告警" value={clusterActiveAlerts.length} valueStyle={{ color: clusterActiveAlerts.length > 0 ? '#cf1322' : '#389e0d' }} /></div>
+                    </div>
+                    <Descriptions className="clusterDescription" bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }}>
+                      <Descriptions.Item label="Kubernetes 版本">{clusterState.kubernetes_version || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="容器运行时">{clusterState.runtime_summary?.join(', ') || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="系统版本">{clusterState.os_summary?.join(', ') || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Deployment">{clusterWorkloadSummary.deployment_count || 0}</Descriptions.Item>
+                      <Descriptions.Item label="StatefulSet">{clusterWorkloadSummary.statefulset_count || 0}</Descriptions.Item>
+                      <Descriptions.Item label="DaemonSet">{clusterWorkloadSummary.daemonset_count || 0}</Descriptions.Item>
+                    </Descriptions>
+                    <div className="clusterPanel">
+                      <h4>Pod 状态分布</h4>
+                      <Space wrap>
+                        <Tag color="green">Running {clusterPodSummary.running || 0}</Tag>
+                        <Tag color="gold">Pending {clusterPodSummary.pending || 0}</Tag>
+                        <Tag color="red">Failed {clusterPodSummary.failed || 0}</Tag>
+                        <Tag>Succeeded {clusterPodSummary.succeeded || 0}</Tag>
+                        <Tag color="volcano">CrashLoopBackOff {clusterPodSummary.crash_loop_backoff || 0}</Tag>
+                        <Tag color="magenta">ImagePullBackOff {clusterPodSummary.image_pull_backoff || 0}</Tag>
+                      </Space>
+                    </div>
+                  </>,
+                },
+                { key: 'nodes', label: `节点 (${clusterNodes.length})`, children: <Table rowKey="name" dataSource={clusterNodes} columns={nodeColumns} size="small" pagination={false} scroll={{ x: 1900 }} /> },
+                { key: 'workloads', label: `工作负载 (${clusterWorkloads.length})`, children: <Table rowKey={(row) => `${row.kind}/${row.namespace}/${row.name}`} dataSource={clusterWorkloads} columns={workloadColumns} size="small" pagination={{ pageSize: 15 }} scroll={{ x: 800 }} /> },
+                {
+                  key: 'pods', label: `Pod 健康 (${clusterProblemPods.length})`, children: <>
+                    <div className="clusterPanel"><h4>异常 Pod</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterProblemPods} columns={podColumns} size="small" pagination={{ pageSize: 10 }} scroll={{ x: 1100 }} locale={{ emptyText: '当前没有异常 Pod' }} /></div>
+                    <div className="clusterPanel"><h4>重启次数最高</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterTopRestarts} columns={podColumns.slice(0, 6)} size="small" pagination={false} scroll={{ x: 850 }} /></div>
+                  </>,
+                },
+                {
+                  key: 'resources', label: '资源用量', children: <>
+                    {!clusterSnapshot.resource_summary?.metrics_available ? <Alert type="warning" showIcon message="实时资源指标不可用" description="目标集群需要安装并正常运行 Metrics Server，Agent 才能显示实时 CPU 和内存使用率。下方 Requests、Limits 仍可正常查看。" /> : null}
+                    <Row gutter={[16, 16]}>
+                      {clusterSnapshot.resource_summary?.metrics_available ? <>
+                        <Col xs={24} xl={12}><div className="clusterPanel"><h4>节点 CPU 使用率</h4><Table rowKey="name" dataSource={clusterSnapshot.resource_summary?.top_cpu_nodes || []} size="small" pagination={false} columns={[{ title: '节点', dataIndex: 'name' }, { title: 'CPU 使用率', dataIndex: 'cpu_usage_percent', render: (value: number) => <Progress percent={value} size="small" /> }, { title: 'CPU Requests', dataIndex: 'cpu_request_percent', render: (value: number | null) => formatPercent(value) }]} /></div></Col>
+                        <Col xs={24} xl={12}><div className="clusterPanel"><h4>节点内存使用率</h4><Table rowKey="name" dataSource={clusterSnapshot.resource_summary?.top_memory_nodes || []} size="small" pagination={false} columns={[{ title: '节点', dataIndex: 'name' }, { title: '内存使用率', dataIndex: 'memory_usage_percent', render: (value: number) => <Progress percent={value} size="small" /> }, { title: '内存 Requests', dataIndex: 'memory_request_percent', render: (value: number | null) => formatPercent(value) }]} /></div></Col>
+                        <Col xs={24} xl={12}><div className="clusterPanel"><h4>Pod CPU 使用最高</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.resource_summary?.top_cpu_pods || []} size="small" pagination={false} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: 'Pod', dataIndex: 'name', ellipsis: true }, { title: 'CPU', dataIndex: 'cpu_usage_cores', render: (value: number) => `${value.toFixed(3)} 核` }, { title: 'Request', dataIndex: 'cpu_request_cores', render: (value: number) => `${value || 0} 核` }]} /></div></Col>
+                        <Col xs={24} xl={12}><div className="clusterPanel"><h4>Pod 内存使用最高</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.resource_summary?.top_memory_pods || []} size="small" pagination={false} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: 'Pod', dataIndex: 'name', ellipsis: true }, { title: '内存', dataIndex: 'memory_usage_bytes', render: (value: number) => formatBytes(value) }, { title: 'Request', dataIndex: 'memory_request_bytes', render: (value: number) => formatBytes(value) }]} /></div></Col>
+                      </> : null}
+                      <Col xs={24} xl={12}><div className="clusterPanel"><h4>Pod CPU Requests / Limits 最高</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.resource_summary?.top_cpu_request_pods || []} size="small" pagination={false} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: 'Pod', dataIndex: 'name', ellipsis: true }, { title: 'Request', dataIndex: 'cpu_request_cores', render: (value: number) => `${value || 0} 核` }, { title: 'Limit', dataIndex: 'cpu_limit_cores', render: (value: number) => value ? `${value} 核` : '-' }]} /></div></Col>
+                      <Col xs={24} xl={12}><div className="clusterPanel"><h4>Pod 内存 Requests / Limits 最高</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.resource_summary?.top_memory_request_pods || []} size="small" pagination={false} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: 'Pod', dataIndex: 'name', ellipsis: true }, { title: 'Request', dataIndex: 'memory_request_bytes', render: (value: number) => formatBytes(value) }, { title: 'Limit', dataIndex: 'memory_limit_bytes', render: (value: number) => value ? formatBytes(value) : '-' }]} /></div></Col>
+                    </Row>
+                  </>,
+                },
+                {
+                  key: 'storage-network', label: '存储与网络', children: <>
+                    <div className="clusterStatGrid clusterStatGridCompact">
+                      <div className="clusterStat"><Statistic title="PV" value={clusterSnapshot.storage?.pv_count || 0} /></div>
+                      <div className="clusterStat"><Statistic title="PVC" value={clusterSnapshot.storage?.pvc_count || 0} /></div>
+                      <div className="clusterStat"><Statistic title="Service" value={clusterSnapshot.network?.service_count || 0} /></div>
+                      <div className="clusterStat"><Statistic title="Ingress" value={clusterSnapshot.network?.ingress_count || 0} /></div>
+                      <div className="clusterStat"><Statistic title="无 Endpoint Service" value={clusterSnapshot.network?.services_without_endpoints?.length || 0} valueStyle={{ color: (clusterSnapshot.network?.services_without_endpoints?.length || 0) > 0 ? '#cf1322' : '#389e0d' }} /></div>
+                    </div>
+                    <Row gutter={[16, 16]}>
+                      <Col xs={24} xl={12}><div className="clusterPanel"><h4>PersistentVolume</h4><Table rowKey="name" dataSource={clusterSnapshot.storage?.persistent_volumes || []} size="small" pagination={{ pageSize: 8 }} columns={[{ title: '名称', dataIndex: 'name', ellipsis: true }, { title: '状态', dataIndex: 'phase', render: (value: string) => <Tag color={statusColor(value)}>{value}</Tag> }, { title: '容量', dataIndex: 'capacity' }, { title: '存储类', dataIndex: 'storage_class' }]} /></div></Col>
+                      <Col xs={24} xl={12}><div className="clusterPanel"><h4>PersistentVolumeClaim</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.storage?.persistent_volume_claims || []} size="small" pagination={{ pageSize: 8 }} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: '名称', dataIndex: 'name', ellipsis: true }, { title: '状态', dataIndex: 'phase', render: (value: string) => <Tag color={statusColor(value)}>{value}</Tag> }, { title: '存储类', dataIndex: 'storage_class' }]} /></div></Col>
+                      <Col xs={24} xl={12}><div className="clusterPanel"><h4>Service</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.network?.services || []} size="small" pagination={{ pageSize: 8 }} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: 'Service', dataIndex: 'name', ellipsis: true }, { title: '类型', dataIndex: 'type' }, { title: 'Cluster IP', dataIndex: 'cluster_ip' }, { title: 'Endpoint', dataIndex: 'has_endpoints', render: (value: boolean) => <Tag color={value ? 'green' : 'red'}>{value ? '正常' : '缺失'}</Tag> }]} /></div></Col>
+                      <Col xs={24} xl={12}><div className="clusterPanel"><h4>Ingress</h4><Table rowKey={(row) => `${row.namespace}/${row.name}`} dataSource={clusterSnapshot.network?.ingresses || []} size="small" pagination={{ pageSize: 8 }} columns={[{ title: '命名空间', dataIndex: 'namespace' }, { title: 'Ingress', dataIndex: 'name', ellipsis: true }, { title: 'Class', dataIndex: 'class' }, { title: '域名', dataIndex: 'hosts', render: (value: string[]) => value?.join(', ') || '-' }]} /></div></Col>
+                    </Row>
+                  </>,
+                },                { key: 'events', label: `集群事件 (${clusterSnapshot.warning_events?.length || 0})`, children: <Table rowKey={(row) => `${row.namespace}/${row.resource_kind}/${row.resource_name}/${row.reason}/${row.time}`} dataSource={clusterSnapshot.warning_events || []} size="small" pagination={{ pageSize: 15 }} scroll={{ x: 900 }} columns={[{ title: '时间', dataIndex: 'time', width: 180, render: (value: string) => value ? new Date(value).toLocaleString() : '-' }, { title: '命名空间', dataIndex: 'namespace', width: 140 }, { title: '原因', dataIndex: 'reason', width: 170, render: (value: string) => <Tag color="orange">{value}</Tag> }, { title: '对象', render: (_: unknown, row: ClusterWarningEvent) => `${row.resource_kind || '-'}/${row.resource_name || '-'}`, width: 220 }, { title: '次数', dataIndex: 'count', width: 80 }, { title: '消息', dataIndex: 'message', ellipsis: true }]} /> },
+                { key: 'alerts', label: `Agent 告警 (${clusterActiveAlerts.length})`, children: <Table rowKey="id" dataSource={clusterOverview.alerts} size="small" pagination={{ pageSize: 15 }} columns={[{ title: '更新时间', dataIndex: 'created_at', width: 180, render: (value: string) => new Date(value).toLocaleString() }, { title: '状态', dataIndex: 'payload', width: 100, render: (value: Record<string, unknown>) => <Tag color={value.status === 'resolved' ? 'green' : value.status === 'active' ? 'red' : 'default'}>{value.status === 'resolved' ? '已恢复' : value.status === 'active' ? '活跃' : '历史'}</Tag> }, { title: '等级', dataIndex: 'level', width: 90, render: (value: string) => <Tag color={levelColor(value)}>{displayText(value)}</Tag> }, { title: '来源', dataIndex: 'source', width: 260, ellipsis: true }, { title: '消息', dataIndex: 'message', ellipsis: true }]} /> },
+                {
+                  key: 'logs', label: `日志 (${clusterOverview.logs.length})`, children: <>
+                    <div className="clusterLogFilters">
+                      <Select allowClear placeholder="命名空间" value={clusterLogNamespace} onChange={(value) => { setClusterLogNamespace(value); setClusterLogPod(undefined); setClusterLogContainer(undefined); }} options={clusterLogNamespaces.map((value) => ({ label: value, value }))} />
+                      <Select allowClear placeholder="Pod" value={clusterLogPod} onChange={(value) => { setClusterLogPod(value); setClusterLogContainer(undefined); }} options={clusterLogPods.map((value) => ({ label: value, value }))} />
+                      <Select allowClear placeholder="容器" value={clusterLogContainer} onChange={setClusterLogContainer} options={clusterLogContainers.map((value) => ({ label: value, value }))} />
+                      <Input allowClear placeholder="关键词" value={clusterLogKeyword} onChange={(event) => setClusterLogKeyword(event.target.value)} />
+                    </div>
+                    <Table rowKey="id" dataSource={filteredClusterLogs} size="small" pagination={{ pageSize: 12 }} scroll={{ x: 1000 }} columns={[{ title: '时间', dataIndex: 'created_at', width: 180, render: (value: string) => new Date(value).toLocaleString() }, { title: '命名空间', dataIndex: 'payload', width: 140, render: (value: Record<string, unknown>) => String(value.namespace || '-') }, { title: 'Pod', dataIndex: 'payload', width: 220, render: (value: Record<string, unknown>) => String(value.pod || '-') }, { title: '容器', dataIndex: 'payload', width: 160, render: (value: Record<string, unknown>) => String(value.container || '-') }, { title: '等级', dataIndex: 'level', width: 90, render: (value: string) => <Tag color={value === 'error' ? 'red' : value === 'warning' ? 'orange' : 'blue'}>{value || 'info'}</Tag> }, { title: '日志内容', dataIndex: 'message', render: (value: string) => <pre className="logLine">{value}</pre> }]} />
+                  </>,
+                },
+                {
+                  key: 'agent', label: 'Agent 安装', children: clusterInstall ? <Space direction="vertical" className="fullWidth" size={12}>
+                    <Alert type="warning" showIcon message="执行前检查平台 API 地址" description={<>当前命令使用 <code>{clusterInstall.platform_api_url}</code>。如果被监控集群无法访问该地址，请替换 <code>PLATFORM_API_URL</code>，并保留 <code>/api/v1</code>。需要采集指定命名空间的普通日志时，可把 <code>LOG_NAMESPACES</code> 改为逗号分隔的命名空间；默认只采集异常 Pod 日志。</>} />
+                    <Input.TextArea value={clusterInstall.install_command} rows={18} readOnly />
+                    <Space><Button onClick={() => copyText(clusterInstall.install_command).then(() => message.success('已复制安装命令')).catch((error: Error) => message.error('复制失败：' + error.message))}>复制命令</Button><Button onClick={() => loadClusterDetails(selectedCluster.id)}>重新生成</Button></Space>
+                  </Space> : <Empty description="安装命令加载失败" />,
+                },
+              ]}
+            />
+          </>
+        )}
       </Card>
     </>
   );

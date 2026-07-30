@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from app.services.cluster_agent_config import normalize_agent_public_api_url
 
@@ -15,6 +16,15 @@ class ClusterAgentConfigTest(unittest.TestCase):
             normalize_agent_public_api_url("http://114.55.117.211:30080/api/v1"),
             "http://114.55.117.211:30080/api/v1",
         )
+
+    def test_agent_manifest_collects_full_cluster_state(self) -> None:
+        source = (Path(__file__).parents[1] / "app" / "api" / "routes" / "clusters.py").read_text(encoding="utf-8")
+        self.assertIn('"pods/log"', source)
+        self.assertIn('"events"', source)
+        self.assertIn('"persistentvolumes"', source)
+        self.assertIn('apiGroups: ["networking.k8s.io"]', source)
+        self.assertIn('AGENT_VERSION: "v2"', source)
+        self.assertIn('imagePullPolicy: Always', source)
 
 
 if __name__ == "__main__":

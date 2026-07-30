@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -90,6 +90,14 @@ class ClusterAgentHeartbeatRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ClusterOverviewRead(BaseModel):
+    cluster: ManagedClusterRead
+    heartbeat: ClusterAgentHeartbeatRead | None = None
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+    alerts: list[ClusterAgentReportRead] = Field(default_factory=list)
+    logs: list[ClusterAgentReportRead] = Field(default_factory=list)
 
 
 class ClusterAgentAck(BaseModel):

@@ -1,4 +1,4 @@
-﻿html, body, #root {
+html, body, #root {
   min-height: 100%;
   margin: 0;
   background: #f4f7fb;
@@ -245,4 +245,115 @@
 .metricTile .ant-statistic-content {
   font-size: 20px;
   overflow-wrap: anywhere;
+}
+
+.clusterWorkspace .ant-card-body {
+  padding-top: 12px;
+}
+
+.clusterSnapshotHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+  color: #475569;
+  font-size: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.clusterDataAlert {
+  margin-bottom: 12px;
+}
+
+.clusterStatGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.clusterStat {
+  min-width: 0;
+  padding: 14px 16px;
+  background: #fff;
+  border-right: 1px solid #e2e8f0;
+}
+
+.clusterStat:last-child {
+  border-right: 0;
+}
+
+.clusterStat .ant-statistic-content {
+  font-size: 21px;
+}
+
+.clusterDescription {
+  margin-top: 14px;
+}
+
+.clusterPanel {
+  margin-top: 14px;
+}
+
+.clusterPanel h4 {
+  margin: 0 0 10px;
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.clusterLogFilters {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.clusterWorkspace .ant-tabs-tab {
+  padding-inline: 4px;
+}
+
+@media (max-width: 1200px) {
+  .clusterStatGrid {
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+  }
+
+  .clusterStat:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .clusterStat:nth-child(-n+3) {
+    border-bottom: 1px solid #e2e8f0;
+  }
+}
+
+@media (max-width: 720px) {
+  .clusterStatGrid {
+    grid-template-columns: repeat(2, minmax(110px, 1fr));
+  }
+
+  .clusterStat,
+  .clusterStat:nth-child(3n) {
+    border-right: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .clusterStat:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .clusterStat:nth-last-child(-n+2) {
+    border-bottom: 0;
+  }
+
+  .clusterLogFilters {
+    grid-template-columns: 1fr;
+  }
+}
+.clusterStatGridCompact {
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  margin-bottom: 4px;
 }

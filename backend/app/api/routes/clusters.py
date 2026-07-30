@@ -1,4 +1,5 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
+import hashlib
 import secrets
 from textwrap import dedent
 
@@ -18,6 +19,7 @@ from app.schemas.managed_cluster import (
     ClusterAgentHeartbeatRead,
     ClusterAgentReportRead,
     ClusterHeartbeatIn,
+    ClusterOverviewRead,
     ClusterReportIn,
     ManagedClusterCreate,
     ManagedClusterInstallRead,
@@ -84,10 +86,13 @@ def build_agent_manifest(cluster: ManagedCluster) -> str:
       name: monitor-agent-reader-{cluster.id}
     rules:
       - apiGroups: [""]
-        resources: ["nodes", "pods", "services", "endpoints", "namespaces"]
+        resources: ["nodes", "pods", "pods/log", "services", "endpoints", "namespaces", "events", "persistentvolumes", "persistentvolumeclaims"]
         verbs: ["get", "list", "watch"]
       - apiGroups: ["apps"]
-        resources: ["deployments", "statefulsets", "daemonsets"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["networking.k8s.io"]
+        resources: ["ingresses"]
         verbs: ["get", "list", "watch"]
       - apiGroups: ["metrics.k8s.io"]
         resources: ["nodes", "pods"]
@@ -124,6 +129,9 @@ def build_agent_manifest(cluster: ManagedCluster) -> str:
       PLATFORM_API_URL: "{api_url}"
       CLUSTER_NAME: "{cluster.name}"
       HEARTBEAT_INTERVAL_SECONDS: "30"
+      AGENT_VERSION: "v2"
+      LOG_NAMESPACES: ""
+      LOG_TAIL_LINES: "80"
     ---
     apiVersion: apps/v1
     kind: Deployment
@@ -144,7 +152,7 @@ def build_agent_manifest(cluster: ManagedCluster) -> str:
           containers:
             - name: monitor-agent
               image: 114.55.117.211:18080/monitor-platform/monitor-agent:v1
-              imagePullPolicy: IfNotPresent
+              imagePullPolicy: Always
               envFrom:
                 - configMapRef:
                     name: monitor-agent-config
@@ -248,6 +256,41 @@ def get_cluster_install(
     )
 
 
+@router.get("/{cluster_id}/overview", response_model=ClusterOverviewRead)
+def get_cluster_overview(
+    cluster_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClusterOverviewRead:
+    cluster = get_owned_cluster(cluster_id, db, current_user)
+    heartbeat = (
+        db.query(ClusterAgentHeartbeat)
+        .filter(ClusterAgentHeartbeat.cluster_id == cluster.id)
+        .order_by(ClusterAgentHeartbeat.created_at.desc(), ClusterAgentHeartbeat.id.desc())
+        .first()
+    )
+    metric = (
+        db.query(ClusterAgentReport)
+        .filter(ClusterAgentReport.cluster_id == cluster.id, ClusterAgentReport.report_type == "metric")
+        .order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc())
+        .first()
+    )
+    alerts = list(
+        db.query(ClusterAgentReport)
+        .filter(ClusterAgentReport.cluster_id == cluster.id, ClusterAgentReport.report_type == "alert")
+        .order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc())
+        .limit(500)
+        .all()
+    )
+    logs = list(
+        db.query(ClusterAgentReport)
+        .filter(ClusterAgentReport.cluster_id == cluster.id, ClusterAgentReport.report_type == "log")
+        .order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc())
+        .limit(500)
+        .all()
+    )
+    return ClusterOverviewRead(cluster=cluster, heartbeat=heartbeat, snapshot=metric.payload if metric else {}, alerts=alerts, logs=logs)
+
 @router.get("/{cluster_id}/heartbeats", response_model=list[ClusterAgentHeartbeatRead])
 def list_cluster_heartbeats(
     cluster_id: int,
@@ -280,6 +323,22 @@ def list_cluster_reports(
     return list(query.order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc()).limit(limit).all())
 
 
+def report_fingerprint(payload: ClusterReportIn) -> str:
+    explicit = str(payload.payload.get("fingerprint") or "").strip()
+    if explicit:
+        return explicit
+    value = "|".join([payload.report_type, payload.source or "", payload.level or "", payload.message or ""])
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+
+
+def update_report(report: ClusterAgentReport, payload: ClusterReportIn, now: datetime) -> None:
+    report.source = payload.source
+    report.level = payload.level
+    report.message = payload.message
+    report.payload = payload.payload
+    report.created_at = now
+
+
 @agent_router.post("/heartbeat", response_model=ClusterAgentAck)
 def agent_heartbeat(
     payload: ClusterHeartbeatIn,
@@ -289,15 +348,38 @@ def agent_heartbeat(
 ) -> ClusterAgentAck:
     cluster = get_agent_cluster(x_agent_token or authorization, db)
     now = datetime.now(timezone.utc)
-    heartbeat = ClusterAgentHeartbeat(cluster_id=cluster.id, **payload.model_dump())
-    db.add(heartbeat)
+    heartbeat = (
+        db.query(ClusterAgentHeartbeat)
+        .filter(ClusterAgentHeartbeat.cluster_id == cluster.id)
+        .order_by(ClusterAgentHeartbeat.id.desc())
+        .first()
+    )
+    if heartbeat is None:
+        heartbeat = ClusterAgentHeartbeat(cluster_id=cluster.id)
+        db.add(heartbeat)
+    else:
+        db.query(ClusterAgentHeartbeat).filter(
+            ClusterAgentHeartbeat.cluster_id == cluster.id,
+            ClusterAgentHeartbeat.id != heartbeat.id,
+        ).delete(synchronize_session=False)
+    for field, value in payload.model_dump().items():
+        setattr(heartbeat, field, value)
+    heartbeat.created_at = now
     cluster.status = payload.status or "online"
     cluster.agent_version = payload.agent_version
     cluster.node_count = payload.node_count
     cluster.pod_count = payload.pod_count
     cluster.last_heartbeat_at = now
+    cluster.alerts_count = sum(
+        1
+        for item in db.query(ClusterAgentReport).filter(
+            ClusterAgentReport.cluster_id == cluster.id,
+            ClusterAgentReport.report_type == "alert",
+        ).all()
+        if (item.payload or {}).get("status") == "active"
+    )
     db.commit()
-    return ClusterAgentAck(ok=True, message="heartbeat accepted")
+    return ClusterAgentAck(ok=True, message="current heartbeat updated")
 
 
 @agent_router.post("/reports", response_model=ClusterAgentAck)
@@ -308,15 +390,66 @@ def agent_report(
     db: Session = Depends(get_db),
 ) -> ClusterAgentAck:
     cluster = get_agent_cluster(x_agent_token or authorization, db)
-    report = ClusterAgentReport(cluster_id=cluster.id, **payload.model_dump())
-    db.add(report)
+    now = datetime.now(timezone.utc)
+    query = db.query(ClusterAgentReport).filter(ClusterAgentReport.cluster_id == cluster.id, ClusterAgentReport.report_type == payload.report_type)
+
     if payload.report_type == "metric":
-        cluster.metrics_count += 1
-    elif payload.report_type == "log":
-        cluster.logs_count += 1
-    elif payload.report_type == "alert":
-        cluster.alerts_count += 1
+        report = query.order_by(ClusterAgentReport.id.desc()).first()
+        if report is None:
+            report = ClusterAgentReport(cluster_id=cluster.id, report_type="metric")
+            db.add(report)
+        else:
+            query.filter(ClusterAgentReport.id != report.id).delete(synchronize_session=False)
+        update_report(report, payload, now)
+        active_fingerprints = payload.payload.get("active_alert_fingerprints")
+        if isinstance(active_fingerprints, list):
+            active_set = {str(value) for value in active_fingerprints}
+            alert_rows = db.query(ClusterAgentReport).filter(
+                ClusterAgentReport.cluster_id == cluster.id,
+                ClusterAgentReport.report_type == "alert",
+            ).all()
+            for alert in alert_rows:
+                alert_payload = dict(alert.payload or {})
+                if alert_payload.get("status") == "active" and str(alert_payload.get("fingerprint") or "") not in active_set:
+                    alert.payload = {**alert_payload, "status": "resolved", "resolved_at": now.isoformat()}
+                    alert.created_at = now
+            cluster.alerts_count = sum(
+                1 for alert in alert_rows if str((alert.payload or {}).get("fingerprint") or "") in active_set
+            )
+        cluster.metrics_count = 1
+    else:
+        fingerprint = report_fingerprint(payload)
+        report = None
+        for candidate in query.order_by(ClusterAgentReport.id.desc()).limit(500).all():
+            if str((candidate.payload or {}).get("fingerprint") or "") == fingerprint:
+                report = candidate
+                break
+        if report is None:
+            report = ClusterAgentReport(cluster_id=cluster.id, **payload.model_dump())
+            report.payload = {**payload.payload, "fingerprint": fingerprint}
+            db.add(report)
+        else:
+            update_report(report, payload, now)
+            report.payload = {**payload.payload, "fingerprint": fingerprint}
+
+        if payload.report_type == "log":
+            db.flush()
+            log_rows = query.order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc()).all()
+            for stale in log_rows[500:]:
+                db.delete(stale)
+            db.flush()
+            cluster.logs_count = min(query.count(), 500)
+        else:
+            db.flush()
+            alert_rows = query.order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc()).all()
+            for stale in alert_rows[500:]:
+                db.delete(stale)
+            db.flush()
+            cluster.alerts_count = sum(
+                1 for item in query.all() if (item.payload or {}).get("status") == "active"
+            )
+
     db.commit()
-    return ClusterAgentAck(ok=True, message="report accepted")
+    return ClusterAgentAck(ok=True, message="current report updated")
 
 

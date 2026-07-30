@@ -11,7 +11,7 @@ pipeline {
     parameters {
         booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Run SonarQube analysis and quality gate')
         booleanParam(name: 'ENFORCE_SONAR_GATE', defaultValue: false, description: 'Stop deployment when the SonarQube quality gate fails')
-        booleanParam(name: 'BUILD_AGENT', defaultValue: false, description: 'Build and push the monitor-agent image')
+        booleanParam(name: 'BUILD_AGENT', defaultValue: true, description: 'Build and push the monitor-agent image')
         booleanParam(name: 'DEPLOY_TO_K8S', defaultValue: true, description: 'Deploy the release and required runtime configuration to Kubernetes')
     }
 
@@ -74,7 +74,8 @@ pipeline {
             steps {
                 sh '''
                     cd agent
-                    python3 -m compileall agent.py
+                    python3 -m compileall agent.py test_agent.py
+                    python3 -m unittest -v test_agent.py
                 '''
             }
         }
@@ -198,6 +199,7 @@ pipeline {
                     if (params.BUILD_AGENT) {
                         sh '''
                             docker push "$AGENT_IMAGE:$IMAGE_TAG"
+                            docker push "$AGENT_IMAGE:v1"
                         '''
                     }
                 }
@@ -277,6 +279,12 @@ pipeline {
                                 kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-frontend GRAFANA_PROXY_CONFIG=v1
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s
+
+                                if [ "$BUILD_AGENT" = "true" ] && kubectl -n monitor-agent get deployment monitor-agent >/dev/null 2>&1; then
+                                  kubectl -n monitor-agent set image deployment/monitor-agent monitor-agent="$AGENT_IMAGE:v1"
+                                  kubectl -n monitor-agent rollout restart deployment/monitor-agent
+                                  kubectl -n monitor-agent rollout status deployment/monitor-agent --timeout=180s
+                                fi
 
                                 test "$(kubectl -n "$K8S_NAMESPACE" get deployment monitor-backend -o jsonpath='{.spec.template.spec.serviceAccountName}')" = "monitor-backend"
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- \
