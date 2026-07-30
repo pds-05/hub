@@ -1,10 +1,13 @@
-﻿from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text
 
 from app.db.session import Base, engine
 from app.models.alert_event import AlertEvent
 from app.models.alert_event_activity import AlertEventActivity
 from app.models.alert_rule import AlertRule
 from app.models.cluster_agent import ClusterAgentHeartbeat, ClusterAgentReport
+from app.models.grafana_platform_credential import GrafanaPlatformCredential
+from app.models.grafana_target_dashboard import GrafanaTargetDashboard
+from app.models.grafana_user_context import GrafanaUserContext
 from app.models.managed_cluster import ManagedCluster
 from app.models.monitor_target import MonitorTarget
 from app.models.notification_channel import NotificationChannel
@@ -21,6 +24,9 @@ def init_db() -> None:
         AlertRule,
         ClusterAgentHeartbeat,
         ClusterAgentReport,
+        GrafanaPlatformCredential,
+        GrafanaTargetDashboard,
+        GrafanaUserContext,
         ManagedCluster,
         MonitorTarget,
         NotificationChannel,

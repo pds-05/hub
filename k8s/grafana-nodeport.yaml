@@ -1,16 +1,17 @@
-﻿apiVersion: v1
+apiVersion: v1
 kind: Service
 metadata:
-  name: monitoring-grafana-nodeport
+  name: monitoring-grafana-internal
   namespace: monitoring
   labels:
     app.kubernetes.io/name: grafana
+  annotations:
+    monitor-platform/security-note: "ClusterIP only; external access must use the authenticated frontend proxy"
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: grafana
   ports:
     - name: http
       port: 80
       targetPort: 3000
-      nodePort: 31000

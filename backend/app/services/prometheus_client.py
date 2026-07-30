@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import time
 
 import httpx
@@ -102,10 +102,13 @@ class PrometheusClient:
 
     async def target_metrics(self, target: MonitorTarget, minutes: int = 60) -> dict:
         selector = target_selector(target.user_id, target.id)
-        up_value = self._instant_value(await self.query(f"up{{{selector}}}"))
+        is_blackbox = target.target_type in {"website", "port"}
+        status_metric = "probe_success" if is_blackbox else "up"
+        up_value = self._instant_value(await self.query(f"{status_metric}{{{selector}}}"))
         metric_names = await self.metric_names(selector)
         series_count = self._instant_value(await self.query(f"count({{{selector}}})"))
-        definitions = list(definitions_for(target.exporter_kind))
+        metric_kind = "blackbox" if is_blackbox else target.exporter_kind
+        definitions = list(definitions_for(metric_kind))
         if not definitions:
             definitions = [
                 ExporterMetricDefinition(
@@ -153,7 +156,8 @@ class PrometheusClient:
         return {
             "target_id": target.id,
             "target_name": target.name,
-            "exporter_kind": target.exporter_kind or "custom",
+            "target_type": target.target_type,
+            "exporter_kind": metric_kind or "custom",
             "scrape_status": scrape_status,
             "up": up_value,
             "last_scrape_at": target_state.get("lastScrape") if target_state else None,

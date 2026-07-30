@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -11,6 +11,7 @@ from app.db.init_db import init_db
 from app.db.session import SessionLocal
 from app.models.monitor_target import MonitorTarget
 from app.models.user import User
+from app.services.grafana_provisioner import GrafanaProvisioner, GrafanaProvisioningError, provision_target_safely
 from app.services.prometheus_client import PrometheusClient
 from app.services.scrape_config_manager import ScrapeConfigError, get_scrape_config_manager
 
@@ -55,7 +56,7 @@ async def on_startup() -> None:
         with SessionLocal() as db:
             targets = (
                 db.query(MonitorTarget)
-                .filter(MonitorTarget.deleted_at.is_(None), MonitorTarget.target_type == "exporter")
+                .filter(MonitorTarget.deleted_at.is_(None), MonitorTarget.target_type.in_(["exporter", "website", "port"]))
                 .all()
             )
             for target in targets:
@@ -64,6 +65,18 @@ async def on_startup() -> None:
                 except ScrapeConfigError:
                     # A single invalid external target must not stop the platform from starting.
                     continue
+    if settings.grafana_provisioning_enabled:
+        with SessionLocal() as db:
+            try:
+                await GrafanaProvisioner().ensure_api_token(db)
+                users = {user.id: user for user in db.query(User).filter(User.is_active.is_(True)).all()}
+                targets = db.query(MonitorTarget).filter(MonitorTarget.deleted_at.is_(None)).all()
+                for target in targets:
+                    user = users.get(target.user_id)
+                    if user is not None:
+                        await provision_target_safely(db, target, user)
+            except GrafanaProvisioningError:
+                logger.warning("Grafana automatic provisioning is not ready", exc_info=True)
     if settings.target_alert_evaluation_enabled:
         app.state.target_alert_task = asyncio.create_task(evaluate_target_alerts_forever())
 

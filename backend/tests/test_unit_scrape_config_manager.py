@@ -30,6 +30,7 @@ class ScrapeConfigManagerTest(unittest.TestCase):
         manager.resource_labels = {"release": "monitoring"}
         manager.scrape_interval = "30s"
         manager.scrape_timeout = "10s"
+        manager.blackbox_exporter_url = "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
         manager._validate_target_host = Mock()
         target = SimpleNamespace(
             id=19,
@@ -51,5 +52,55 @@ class ScrapeConfigManagerTest(unittest.TestCase):
         manager._validate_target_host.assert_called_once_with("example.com")
 
 
+    def test_build_website_resource_uses_blackbox_http_module(self) -> None:
+        manager = ScrapeConfigManager.__new__(ScrapeConfigManager)
+        manager.api_version = "monitoring.coreos.com/v1alpha1"
+        manager.namespace = "monitoring"
+        manager.resource_labels = {"release": "monitoring"}
+        manager.scrape_interval = "30s"
+        manager.scrape_timeout = "10s"
+        manager.blackbox_exporter_url = "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
+        manager._validate_target_host = Mock()
+        target = SimpleNamespace(
+            id=20,
+            user_id=8,
+            name="public-website",
+            target_type="website",
+            endpoint="https://example.com/health",
+            exporter_kind=None,
+        )
+
+        resource = manager.build_resource(target)
+
+        self.assertEqual(resource["spec"]["metricsPath"], "/probe")
+        self.assertEqual(resource["spec"]["params"], {"module": ["http_2xx"]})
+        self.assertEqual(resource["spec"]["staticConfigs"][0]["targets"], ["https://example.com/health"])
+        self.assertEqual(resource["spec"]["relabelings"][-1]["replacement"], "blackbox-exporter.monitoring.svc.cluster.local:9115")
+        manager._validate_target_host.assert_called_once_with("example.com")
+
+    def test_build_port_resource_uses_blackbox_tcp_module(self) -> None:
+        manager = ScrapeConfigManager.__new__(ScrapeConfigManager)
+        manager.api_version = "monitoring.coreos.com/v1alpha1"
+        manager.namespace = "monitoring"
+        manager.resource_labels = {"release": "monitoring"}
+        manager.scrape_interval = "30s"
+        manager.scrape_timeout = "10s"
+        manager.blackbox_exporter_url = "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
+        manager._validate_target_host = Mock()
+        target = SimpleNamespace(
+            id=21,
+            user_id=8,
+            name="redis-port",
+            target_type="port",
+            endpoint="example.com:6379",
+            exporter_kind=None,
+        )
+
+        resource = manager.build_resource(target)
+
+        self.assertEqual(resource["spec"]["params"], {"module": ["tcp_connect"]})
+        self.assertEqual(resource["spec"]["staticConfigs"][0]["targets"], ["example.com:6379"])
+        self.assertEqual(resource["spec"]["staticConfigs"][0]["labels"]["platform_target_type"], "port")
+        manager._validate_target_host.assert_called_once_with("example.com")
 if __name__ == "__main__":
     unittest.main()

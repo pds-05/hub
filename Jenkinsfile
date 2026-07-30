@@ -22,6 +22,7 @@ pipeline {
         FRONTEND_IMAGE = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/monitor-frontend"
         AGENT_IMAGE = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/monitor-agent"
         K8S_NAMESPACE = 'platform'
+        GRAFANA_PUBLIC_URL = 'http://114.55.117.211:30080/grafana'
     }
 
     stages {
@@ -90,6 +91,11 @@ pipeline {
                         test "$(kubectl auth can-i create serviceaccounts -n "$K8S_NAMESPACE")" = "yes"
                         test "$(kubectl auth can-i create roles.rbac.authorization.k8s.io -n monitoring)" = "yes"
                         test "$(kubectl auth can-i create rolebindings.rbac.authorization.k8s.io -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i create deployments.apps -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i create configmaps -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i create services -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i delete services -n monitoring)" = "yes"
+                        test "$(kubectl auth can-i get secret/monitoring-grafana -n monitoring)" = "yes"
                         test "$(kubectl auth can-i get scrapeconfigs.monitoring.coreos.com -n monitoring)" = "yes"
                         printf '%s\n' \
                           'apiVersion: monitoring.coreos.com/v1alpha1' \
@@ -163,7 +169,7 @@ pipeline {
                             python3 -c "from pathlib import Path; p=Path('frontend/nginx.conf'); data=p.read_bytes(); p.write_bytes(data[3:] if data.startswith(bytes([239,187,191])) else data)"
                             docker build \
                               --build-arg VITE_API_BASE_URL=/api/v1 \
-                              --build-arg VITE_GRAFANA_URL=http://114.55.117.211:31000 \
+                              --build-arg VITE_GRAFANA_URL=http://114.55.117.211:30080/grafana \
                               -t "$FRONTEND_IMAGE:$IMAGE_TAG" \
                               -t "$FRONTEND_IMAGE:latest" \
                               frontend
@@ -224,6 +230,20 @@ pipeline {
                                 export KUBECONFIG="$KUBECONFIG_FILE"
 
                                 kubectl apply -f k8s/monitor-backend-scrapeconfig-rbac.yaml
+                                kubectl apply -f k8s/blackbox-exporter.yaml
+
+                                kubectl -n monitoring set env deployment/monitoring-grafana \
+                                  GF_SERVER_ROOT_URL="$GRAFANA_PUBLIC_URL/" \
+                                  GF_SERVER_SERVE_FROM_SUB_PATH=true \
+                                  GF_AUTH_PROXY_ENABLED=true \
+                                  GF_AUTH_PROXY_HEADER_NAME=X-WEBAUTH-USER \
+                                  GF_AUTH_PROXY_HEADER_PROPERTY=username \
+                                  GF_AUTH_PROXY_AUTO_SIGN_UP=false \
+                                  GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=true \
+                                  GF_AUTH_PROXY_HEADERS='Email:X-WEBAUTH-EMAIL' \
+                                  GF_AUTH_ANONYMOUS_ENABLED=false
+
+                                kubectl apply -f k8s/grafana-nodeport.yaml
 
                                 kubectl -n "$K8S_NAMESPACE" patch deployment monitor-backend \
                                   --type merge \
@@ -239,13 +259,21 @@ pipeline {
                                   PROMETHEUS_TARGET_SCRAPE_TIMEOUT=10s \
                                   PROMETHEUS_ALLOW_PRIVATE_TARGETS=false \
                                   TARGET_ALERT_EVALUATION_ENABLED=true \
-                                  TARGET_ALERT_EVALUATION_INTERVAL_SECONDS=60
+                                  TARGET_ALERT_EVALUATION_INTERVAL_SECONDS=60 \
+                                  BLACKBOX_EXPORTER_URL=http://blackbox-exporter.monitoring.svc.cluster.local:9115 \
+                                  GRAFANA_PUBLIC_URL="$GRAFANA_PUBLIC_URL" \
+                                  GRAFANA_PROVISIONING_ENABLED=true \
+                                  GRAFANA_DATA_PROXY_URL=http://monitor-backend.platform.svc.cluster.local:8000/api/v1/grafana/proxy \
+                                  GRAFANA_SSO_MODE=auth-proxy
 
                                 kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-backend \
                                   monitor-backend="$BACKEND_IMAGE:$IMAGE_TAG"
                                 kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-frontend \
                                   monitor-frontend="$FRONTEND_IMAGE:$IMAGE_TAG"
 
+                                kubectl -n monitoring rollout status deployment/blackbox-exporter --timeout=180s
+                                kubectl -n monitoring rollout status deployment/monitoring-grafana --timeout=180s
+                                kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-frontend GRAFANA_PROXY_CONFIG=v1
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s
 
@@ -256,6 +284,12 @@ pipeline {
                                   'import ssl, urllib.request; token=open("/var/run/secrets/kubernetes.io/serviceaccount/token", encoding="utf-8").read().strip(); context=ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); request=urllib.request.Request("https://kubernetes.default.svc/apis/monitoring.coreos.com/v1alpha1/namespaces/monitoring/scrapeconfigs", headers={"Authorization": "Bearer " + token}); response=urllib.request.urlopen(request, context=context, timeout=10); assert response.status == 200'
 
                                 kubectl get scrapeconfig -n monitoring -l monitor-platform-managed=true || true
+                                kubectl -n monitoring get deployment blackbox-exporter monitoring-grafana
+                                test "$(kubectl -n monitoring get service monitoring-grafana-internal -o jsonpath='{.spec.type}')" = "ClusterIP"
+                                kubectl -n monitoring delete service monitoring-grafana-nodeport --ignore-not-found
+                                test -z "$(kubectl -n monitoring get service monitoring-grafana-nodeport --ignore-not-found -o name)"
+                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import os; assert os.environ.get("GRAFANA_PUBLIC_URL") == "http://114.55.117.211:30080/grafana"'
+                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import urllib.request; assert urllib.request.urlopen("http://blackbox-exporter.monitoring.svc.cluster.local:9115/-/healthy", timeout=10).status == 200'
                             '''
                         } catch (error) {
                             echo 'Kubernetes deployment failed. Restoring the previous application images.'
@@ -265,6 +299,9 @@ pipeline {
                                   monitor-backend="$PREVIOUS_BACKEND_IMAGE" || true
                                 kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-frontend \
                                   monitor-frontend="$PREVIOUS_FRONTEND_IMAGE" || true
+                                kubectl -n monitoring rollout status deployment/blackbox-exporter --timeout=180s
+                                kubectl -n monitoring rollout status deployment/monitoring-grafana --timeout=180s
+                                kubectl -n "$K8S_NAMESPACE" set env deployment/monitor-frontend GRAFANA_PROXY_CONFIG=v1
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-backend --timeout=180s || true
                                 kubectl -n "$K8S_NAMESPACE" rollout status deployment/monitor-frontend --timeout=180s || true
                             '''

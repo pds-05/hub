@@ -30,6 +30,7 @@ class ScrapeConfigManager:
         self.scrape_interval = settings.prometheus_target_scrape_interval
         self.scrape_timeout = settings.prometheus_target_scrape_timeout
         self.allow_private_targets = settings.prometheus_allow_private_targets
+        self.blackbox_exporter_url = settings.blackbox_exporter_url.rstrip("/")
         try:
             self.resource_labels = json.loads(settings.prometheus_scrape_config_labels_json)
         except json.JSONDecodeError as exc:
@@ -72,6 +73,10 @@ class ScrapeConfigManager:
             if ip.is_private and not self.allow_private_targets:
                 raise ScrapeConfigError("当前禁止添加私网 Exporter 地址，请使用公网地址；可信专线或测试环境可开启私网目标开关")
     def build_resource(self, target: MonitorTarget) -> dict[str, Any]:
+        target_type = getattr(target, "target_type", "exporter")
+        if target_type in {"website", "port"}:
+            return self.build_blackbox_resource(target)
+
         parsed = urlparse(target.endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ScrapeConfigError("Exporter 地址必须是完整的 HTTP 或 HTTPS URL")
@@ -114,8 +119,62 @@ class ScrapeConfigManager:
             "spec": spec,
         }
 
+    def build_blackbox_resource(self, target: MonitorTarget) -> dict[str, Any]:
+        if target.target_type == "website":
+            module = "http_2xx"
+            parsed = urlparse(target.endpoint)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ScrapeConfigError("网站地址必须是完整的 HTTP 或 HTTPS URL")
+            self._validate_target_host(parsed.hostname)
+            target_url = target.endpoint
+        else:
+            module = "tcp_connect"
+            parsed = urlparse(target.endpoint if "://" in target.endpoint else f"tcp://{target.endpoint}")
+            if not parsed.hostname or not parsed.port:
+                raise ScrapeConfigError("TCP 端口地址必须包含主机和端口")
+            self._validate_target_host(parsed.hostname)
+            target_url = f"{parsed.hostname}:{parsed.port}"
+
+        target_labels = {
+            "platform_managed": "true",
+            "platform_user_id": str(target.user_id),
+            "platform_target_id": str(target.id),
+            "platform_target_name": target.name,
+            "platform_target_type": target.target_type,
+            "platform_exporter_kind": "blackbox",
+        }
+        blackbox_address = urlparse(self.blackbox_exporter_url).netloc
+        if not blackbox_address:
+            raise ScrapeConfigError("BLACKBOX_EXPORTER_URL 配置无效")
+        return {
+            "apiVersion": self.api_version,
+            "kind": "ScrapeConfig",
+            "metadata": {
+                "name": self.resource_name(target.id),
+                "namespace": self.namespace,
+                "labels": {
+                    **self.resource_labels,
+                    "app.kubernetes.io/managed-by": "monitor-platform",
+                    "monitor-platform-managed": "true",
+                },
+            },
+            "spec": {
+                "jobName": self.resource_name(target.id),
+                "scheme": "HTTP",
+                "metricsPath": "/probe",
+                "scrapeInterval": self.scrape_interval,
+                "scrapeTimeout": self.scrape_timeout,
+                "params": {"module": [module]},
+                "staticConfigs": [{"targets": [target_url], "labels": target_labels}],
+                "relabelings": [
+                    {"sourceLabels": ["__address__"], "targetLabel": "__param_target"},
+                    {"sourceLabels": ["__param_target"], "targetLabel": "instance"},
+                    {"targetLabel": "__address__", "replacement": blackbox_address},
+                ],
+            },
+        }
     async def upsert(self, target: MonitorTarget) -> str | None:
-        if not self.enabled or target.target_type != "exporter":
+        if not self.enabled or target.target_type not in {"exporter", "website", "port"}:
             return None
 
         resource = self.build_resource(target)

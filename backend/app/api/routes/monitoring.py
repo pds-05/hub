@@ -1,8 +1,9 @@
-﻿from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user, require_root_user
 from app.models.user import User
 from app.services.alertmanager_client import AlertmanagerClient, get_alertmanager_client
+from app.services.logql_scope import scope_logql
 from app.services.loki_client import LokiClient, get_loki_client
 from app.services.prometheus_client import PrometheusClient, get_prometheus_client
 
@@ -67,7 +68,8 @@ async def loki_query(
     current_user: User = Depends(get_current_user),
     client: LokiClient = Depends(get_loki_client),
 ) -> dict:
-    return await client.query_range(query, limit=limit, minutes=minutes)
+    scoped_query = query if current_user.role == "root" else scope_logql(query, current_user.id)
+    return await client.query_range(scoped_query, limit=limit, minutes=minutes)
 
 
 @router.get("/alerts")

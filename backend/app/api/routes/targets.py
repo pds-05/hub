@@ -16,6 +16,7 @@ from app.schemas.monitor_target import (
     MonitorTargetSummaryRead,
     MonitorTargetUpdate,
 )
+from app.services.grafana_provisioner import GrafanaProvisioner, GrafanaProvisioningError, provision_target_safely
 from app.services.prometheus_client import PrometheusClient, PrometheusError, get_prometheus_client
 from app.services.scrape_config_manager import ScrapeConfigError, ScrapeConfigManager, get_scrape_config_manager
 from app.services.target_checker import check_monitor_target
@@ -130,6 +131,7 @@ async def create_target(
         db.delete(target)
         db.commit()
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    await provision_target_safely(db, target, current_user)
     return target
 
 
@@ -287,7 +289,6 @@ async def update_target(
         "exporter_kind": target.exporter_kind,
         "description": target.description,
     }
-    was_exporter = target.target_type == "exporter"
     update_data = payload.model_dump(exclude_unset=True)
     if "target_type" not in update_data:
         update_data["target_type"] = target.target_type
@@ -298,23 +299,18 @@ async def update_target(
     db.commit()
     db.refresh(target)
     try:
-        if target.target_type == "exporter":
-            await scrape_configs.upsert(target)
-        elif was_exporter:
-            await scrape_configs.delete(target.id)
+        await scrape_configs.upsert(target)
     except ScrapeConfigError as exc:
         for field, value in original.items():
             setattr(target, field, value)
         db.commit()
         db.refresh(target)
         try:
-            if target.target_type == "exporter":
-                await scrape_configs.upsert(target)
-            else:
-                await scrape_configs.delete(target.id)
+            await scrape_configs.upsert(target)
         except ScrapeConfigError:
             pass
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    await provision_target_safely(db, target, current_user)
     return target
 
 
@@ -327,10 +323,13 @@ async def delete_target(
 ) -> MessageResponse:
     target = get_owned_target(target_id, db, current_user)
     try:
-        if target.target_type == "exporter":
+        if target.target_type in {"exporter", "website", "port"}:
             await scrape_configs.delete(target.id)
+        await GrafanaProvisioner().delete_target_dashboard(db, target.id)
     except ScrapeConfigError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except GrafanaProvisioningError:
+        db.rollback()
     target.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return MessageResponse(message="Target deleted")
@@ -344,13 +343,19 @@ async def sync_target_collection(
     scrape_configs: ScrapeConfigManager = Depends(get_scrape_config_manager),
 ) -> dict:
     target = get_owned_target(target_id, db, current_user)
-    if target.target_type != "exporter":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有 Exporter 类型支持持续采集")
+    if target.target_type not in {"exporter", "website", "port"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前监控对象类型不支持持续采集")
     try:
         resource_name = await scrape_configs.upsert(target)
     except ScrapeConfigError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return {"target_id": target.id, "resource_name": resource_name, "message": "采集配置已同步"}
+    dashboard_url = await provision_target_safely(db, target, current_user)
+    return {
+        "target_id": target.id,
+        "resource_name": resource_name,
+        "dashboard_url": dashboard_url,
+        "message": "采集配置和专属仪表盘已同步",
+    }
 
 
 @router.get("/{target_id}/metrics")
@@ -362,8 +367,8 @@ async def get_target_metrics(
     prometheus: PrometheusClient = Depends(get_prometheus_client),
 ) -> dict:
     target = get_owned_target(target_id, db, current_user)
-    if target.target_type != "exporter":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有 Exporter 类型具有 Prometheus 持续指标")
+    if target.target_type not in {"exporter", "website", "port"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前监控对象类型不支持 Prometheus 持续指标")
     try:
         return await prometheus.target_metrics(target, minutes=minutes)
     except PrometheusError as exc:

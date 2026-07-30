@@ -103,7 +103,7 @@ export default function TargetMetricsPanel({ target, token }: Props) {
   }), [selectedMetric]);
 
   async function loadMetrics(nextMinutes = minutes, showError = true) {
-    if (!target || target.target_type !== 'exporter' || !token) {
+    if (!target || !token) {
       setData(null);
       return;
     }
@@ -123,7 +123,7 @@ export default function TargetMetricsPanel({ target, token }: Props) {
   }
 
   async function syncCollection() {
-    if (!target || target.target_type !== 'exporter') return;
+    if (!target) return;
     setLoading(true);
     try {
       await apiRequest(`/targets/${target.id}/sync`, token, { method: 'POST', body: '{}' });
@@ -138,15 +138,21 @@ export default function TargetMetricsPanel({ target, token }: Props) {
   useEffect(() => {
     setData(null);
     setSelectedKey(null);
-    if (target?.target_type === 'exporter') void loadMetrics(minutes, false);
+    if (target) void loadMetrics(minutes, false);
   }, [target?.id, target?.target_type, token]);
 
-  if (!target || target.target_type !== 'exporter') return null;
+  if (!target) return null;
+
+  const metricTitle = target.target_type === 'website'
+    ? '网站 Blackbox 持续指标'
+    : target.target_type === 'port'
+      ? 'TCP Blackbox 持续指标'
+      : (target.exporter_kind || 'custom') + ' 持续指标';
 
   return (
     <Card
       className="section"
-      title={`${target.exporter_kind || 'custom'} 持续指标`}
+      title={metricTitle}
       extra={(
         <Space wrap>
           <Select
@@ -200,7 +206,7 @@ export default function TargetMetricsPanel({ target, token }: Props) {
           </Row>
           {selectedMetric?.series.length
             ? <ReactECharts option={chartOption} style={{ height: 320 }} />
-            : <Empty description="尚未形成该指标的历史序列，请等待下一次采集或确认 Exporter 已实际暴露此指标" />}
+            : <Empty description="尚未形成该指标的历史序列，请等待下一次采集并确认目标可由采集组件访问" />}
           <Card size="small" title="已发现的指标名称">
             {data.metric_names.length
               ? <Space wrap>{data.metric_names.slice(0, 60).map((name) => <Tag key={name}>{name}</Tag>)}</Space>

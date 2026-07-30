@@ -1,4 +1,4 @@
-﻿from functools import lru_cache
+from functools import lru_cache
 from typing import List
 
 from pydantic import AnyHttpUrl, Field
@@ -34,8 +34,18 @@ class Settings(BaseSettings):
     alertmanager_url: str = "http://monitoring-ack-prometheus-alertmanager.monitoring.svc:9093"
     loki_url: str = "http://loki-gateway.logging.svc.cluster.local"
     grafana_url: str = "http://monitoring-grafana.monitoring.svc.cluster.local:80"
-    grafana_public_url: str = "http://114.55.117.211:31000"
+    grafana_public_url: str = "http://114.55.117.211:30080/grafana"
     grafana_api_key: str = ""
+    grafana_admin_user: str = ""
+    grafana_admin_password: str = ""
+    grafana_admin_secret_namespace: str = "monitoring"
+    grafana_admin_secret_name: str = "monitoring-grafana"
+    grafana_provisioning_enabled: bool = True
+    grafana_data_proxy_secret: str = ""
+    grafana_data_proxy_url: str = "http://monitor-backend.platform.svc.cluster.local:8000/api/v1/grafana/proxy"
+    grafana_sso_mode: str = "auth-proxy"
+    grafana_auth_proxy_header: str = "X-WEBAUTH-USER"
+    blackbox_exporter_url: str = "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
     harbor_url: str = "http://114.55.117.211:18080"
     agent_public_api_url: str = "http://114.55.117.211:30080/api/v1"
 

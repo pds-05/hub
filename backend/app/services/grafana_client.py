@@ -1,6 +1,7 @@
-﻿import httpx
+import httpx
 
 from app.core.config import get_settings
+from app.services.grafana_runtime import get_api_token
 
 
 class GrafanaError(Exception):
@@ -23,9 +24,10 @@ class GrafanaClient:
         self.public_url = settings.grafana_public_url.rstrip("/")
 
     def _headers(self) -> dict[str, str]:
-        if not self.api_key:
+        token = self.api_key or get_api_token()
+        if not token:
             return {}
-        return {"Authorization": f"Bearer {self.api_key}"}
+        return {"Authorization": f"Bearer {token}"}
 
     async def dashboards(self, query: str | None = None, limit: int = 200) -> list[dict]:
         params = {"type": "dash-db", "limit": limit}
@@ -39,7 +41,7 @@ class GrafanaClient:
                     headers=self._headers(),
                 )
             if response.status_code in {401, 403}:
-                raise GrafanaUnauthorizedError("Grafana API requires an API key or enabled anonymous access")
+                raise GrafanaUnauthorizedError("Grafana API Token 尚未配置或无权访问")
             response.raise_for_status()
             rows = response.json()
         except GrafanaUnauthorizedError:
@@ -75,7 +77,7 @@ class GrafanaClient:
             async with httpx.AsyncClient(timeout=5) as client:
                 response = await client.get(f"{self.base_url}/api/health", headers=self._headers())
             if response.status_code in {401, 403}:
-                raise GrafanaUnauthorizedError("Grafana API requires an API key or enabled anonymous access")
+                raise GrafanaUnauthorizedError("Grafana API Token 尚未配置或无权访问")
             response.raise_for_status()
             data = response.json()
         except GrafanaUnauthorizedError:

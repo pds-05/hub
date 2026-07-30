@@ -10,6 +10,10 @@ metadata:
   name: monitor-backend-scrapeconfig
   namespace: monitoring
 rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["monitoring-grafana"]
+    verbs: ["get"]
   - apiGroups: ["monitoring.coreos.com"]
     resources: ["scrapeconfigs"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

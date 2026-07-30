@@ -9,7 +9,7 @@ import './styles.css';
 
 const { Header, Content, Sider } = Layout;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
-const GRAFANA_URL = (import.meta.env.VITE_GRAFANA_URL || 'http://114.55.117.211:31000').replace(/\/$/, '');
+const GRAFANA_URL = (import.meta.env.VITE_GRAFANA_URL || 'http://114.55.117.211:30080/grafana').replace(/\/$/, '');
 
 type PageKey = 'overview' | 'targets' | 'clusters' | 'rules' | 'events' | 'channels' | 'records' | 'logs' | 'assistant' | 'grafana' | 'platformHealth';
 type HandlingStatus = 'new' | 'acknowledged' | 'investigating' | 'mitigating' | 'watching' | 'resolved' | 'closed';
@@ -29,9 +29,9 @@ type NotificationChannelType = 'email' | 'webhook' | 'dingtalk' | 'feishu' | 'we
 type NotificationChannel = { id: number; name: string; channel_type: NotificationChannelType; config: Record<string, unknown>; enabled: boolean; description?: string | null; };
 type NotificationRecord = { id: number; channel_id: number; alert_event_id: number; notification_type: 'triggered' | 'resolved'; status: 'pending' | 'sent' | 'failed' | 'skipped'; title: string; content: string; error_message?: string | null; created_at: string; };
 type GrafanaDashboard = { id?: number; uid?: string; title: string; url: string; full_url: string; folder_title: string; tags: string[]; is_starred: boolean; };
-type GrafanaTargetView = { target_id: number; target_name: string; target_type: TargetType; exporter_kind?: ExporterKind | null; endpoint: string; match_type: 'dashboard' | 'explore'; url: string; dashboard?: GrafanaDashboard | null; keywords: string[][]; };
+type GrafanaTargetView = { target_id: number; target_name: string; target_type: TargetType; exporter_kind?: ExporterKind | null; endpoint: string; match_type: 'provisioned' | 'pending'; url: string; dashboard?: GrafanaDashboard | null; keywords: string[][]; };
 type GrafanaPlatformView = { key: string; title: string; match_type: 'dashboard' | 'search'; url: string; dashboard?: GrafanaDashboard | null; keywords: string[][]; };
-type GrafanaViews = { grafana_url: string; grafana_public_url?: string; role: string; targets: GrafanaTargetView[]; platform: GrafanaPlatformView[]; dashboard_count: number; };
+type GrafanaViews = { grafana_url: string; grafana_public_url?: string; role: string; targets: GrafanaTargetView[]; platform: GrafanaPlatformView[]; dashboard_count: number; isolation?: string; sso_mode?: string; };
 type AlertEventActivity = { id: number; user_id: number; event_id: number; action: 'note' | 'ack' | 'resolve' | string; note?: string | null; actor: string; created_at: string; };
 type LogEntry = { id: string; time: string; labels: Record<string, string>; line: string; };
 type LogQueryMode = 'simple' | 'advanced';
@@ -77,6 +77,7 @@ class ApiError extends Error {
 async function request<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -560,9 +561,13 @@ export default function App() {
   };
 
   function openGrafana(path = '/') {
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    if (/^https?:\/\//i.test(path)) {
+      window.open(path, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    const normalizedPath = path.startsWith('/') ? path : '/' + path;
     const baseUrl = (grafanaViews?.grafana_public_url || GRAFANA_URL).replace(/\/$/, '');
-    window.open(`${baseUrl}${normalizedPath}`, '_blank', 'noopener,noreferrer');
+    window.open(baseUrl + normalizedPath, '_blank', 'noopener,noreferrer');
   }
 
   function grafanaSearchPath(query: string) {
@@ -588,19 +593,12 @@ export default function App() {
   }
 
   function openTargetGrafana(target: MonitorTarget) {
-    if (target.target_type === 'exporter') {
-      if (target.exporter_kind === 'node') {
-        openGrafana(grafanaDashboardPath([['node', '节点'], ['pod']]));
-        return;
-      }
-      openGrafana(grafanaDashboardPath([[target.exporter_kind || 'exporter']]));
+    const view = grafanaViews?.targets.find((item) => item.target_id === target.id);
+    if (view?.url) {
+      openGrafana(view.url);
       return;
     }
-    if (target.target_type === 'website') {
-      openGrafana('/explore');
-      return;
-    }
-    openGrafana(grafanaDashboardPath([['cluster', '集群', '多集群'], ['compute', '计算资源']], '/d/efa86fd1d0c121a26444b636a3f509a8/kubernetes-compute-resources-cluster?orgId=1&refresh=10s'));
+    message.info('专属仪表盘还未创建，请先点击“同步 Grafana”。');
   }
 
   function openAlertGrafana(event: AlertEvent) {
@@ -796,6 +794,9 @@ export default function App() {
     try {
       const user = await request<CurrentUser>('/auth/me', nextToken);
       setCurrentUser(user);
+      await request<{ ok: boolean; grafana_ready: boolean }>(
+        '/auth/session', nextToken, { method: 'POST', body: '{}' },
+      ).catch(() => null);
       return user;
     } catch (error) {
       handleRequestError(error, '获取当前用户失败');
@@ -839,6 +840,7 @@ export default function App() {
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       });
@@ -2054,16 +2056,29 @@ export default function App() {
     );
   };
   const renderRecords = () => <Card title="通知记录" extra={<Button icon={<SendOutlined />} onClick={sendPending} loading={loading}>发送待处理通知</Button>}><Table rowKey="id" dataSource={records} size="small" pagination={{ pageSize: 10 }} columns={[{ title: 'ID', dataIndex: 'id', width: 70 }, { title: '标题', dataIndex: 'title', ellipsis: true }, { title: '类型', dataIndex: 'notification_type', render: (v: string) => <Tag>{displayText(v)}</Tag> }, { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColor(v)}>{displayText(v)}</Tag> }, { title: '错误', dataIndex: 'error_message', ellipsis: true }]} /></Card>;
+  async function syncGrafana() {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const result = await request<{ count: number }>('/grafana/provision', token, { method: 'POST', body: '{}' });
+      message.success(`已同步 ${result.count} 个 Grafana 仪表盘`);
+      await loadAll();
+    } catch (error) {
+      handleRequestError(error, '同步 Grafana 失败');
+    } finally {
+      setLoading(false);
+    }
+  }
   const renderGrafana = () => (
     <Space direction="vertical" className="fullWidth" size={16}>
       <Card
         title="Grafana 可视化"
-        extra={<Button icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>重新加载</Button>}
+        extra={<Space><Button onClick={syncGrafana} loading={loading}>同步 Grafana</Button><Button icon={<ReloadOutlined />} onClick={loadAll} loading={loading}>重新加载</Button></Space>}
       >
         <Alert
           type={grafanaError ? 'warning' : 'info'}
           showIcon
-          message={grafanaError || `已发现 ${grafanaViews?.dashboard_count ?? grafanaDashboards.length} 个 Grafana 仪表盘。普通用户只展示自己监控对象相关入口，root 额外展示平台支撑组件。`}
+          message={grafanaError || `已准备 ${grafanaViews?.dashboard_count ?? grafanaDashboards.length} 个 Grafana 仪表盘。监控对象图表按用户隔离，登录平台后无需再次登录 Grafana。`}
         />
       </Card>
       <Card title="我的监控对象图表">
@@ -2077,13 +2092,13 @@ export default function App() {
                     {view.exporter_kind ? <Tag color="blue">{view.exporter_kind}</Tag> : null}
                     <div>
                       {view.dashboard ? (
-                        <Tag color="green">匹配仪表盘：{view.dashboard.title}</Tag>
+                        <Tag color="green">专属仪表盘已就绪</Tag>
                       ) : (
-                        <Tag color="orange">未匹配仪表盘，打开 Explore</Tag>
+                        <Tag color="orange">等待自动创建仪表盘</Tag>
                       )}
                     </div>
-                    <Button type="primary" icon={<BarChartOutlined />} onClick={() => openGrafana(view.url)}>
-                      打开图表
+                    <Button type="primary" icon={<BarChartOutlined />} disabled={!view.url} onClick={() => openGrafana(view.url)}>
+                      打开专属图表
                     </Button>
                   </Space>
                 </Card>
@@ -2110,7 +2125,7 @@ export default function App() {
           ) : <Empty description="暂无平台支撑图表" />}
         </Card>
       ) : null}
-      <Card title="全部 Grafana 仪表盘">
+      {currentUser?.role === 'root' ? <Card title="全部 Grafana 仪表盘">
         <Table
           rowKey={(row) => row.uid || row.url}
           dataSource={grafanaDashboards}
@@ -2123,7 +2138,7 @@ export default function App() {
             { title: '操作', render: (_: unknown, row: GrafanaDashboard) => <Button size="small" onClick={() => openGrafana(row.url)}>打开</Button> },
           ]}
         />
-      </Card>
+      </Card> : null}
     </Space>
   );
   const renderPlatformHealth = () => <Card title="平台自身健康" extra={<Button icon={<ReloadOutlined />} onClick={loadPlatformHealth} loading={loading}>刷新</Button>}><Alert type={platformHealth?.status === 'healthy' ? 'success' : 'warning'} showIcon message={`整体状态：${platformHealth?.status || 'unknown'}`} /><Table rowKey="name" dataSource={platformHealth?.services || []} size="small" pagination={false} columns={[{ title: '组件', dataIndex: 'name' }, { title: '状态', dataIndex: 'status', render: (value: string) => <Tag color={value === 'healthy' ? 'green' : value === 'down' ? 'red' : 'orange'}>{value}</Tag> }, { title: '说明', dataIndex: 'message' }, { title: '地址', dataIndex: 'url', ellipsis: true }]} /></Card>;
@@ -2183,6 +2198,7 @@ export default function App() {
               </Button>
               <Button
                 onClick={() => {
+                  void fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' });
                   localStorage.removeItem('access_token');
                   setToken('');
                   setCurrentUser(null);

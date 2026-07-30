@@ -1,4 +1,4 @@
-﻿apiVersion: v1
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: monitor-backend
@@ -10,6 +10,10 @@ metadata:
   name: monitor-backend-scrapeconfig
   namespace: monitoring
 rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["monitoring-grafana"]
+    verbs: ["get"]
   - apiGroups: ["monitoring.coreos.com"]
     resources: ["scrapeconfigs"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -52,7 +56,13 @@ data:
   ALERTMANAGER_URL: "http://monitoring-ack-prometheus-alertmanager.monitoring.svc.cluster.local:9093"
   LOKI_URL: "http://loki-gateway.logging.svc.cluster.local"
   GRAFANA_URL: "http://monitoring-grafana.monitoring.svc.cluster.local:80"
-  GRAFANA_PUBLIC_URL: "http://114.55.117.211:31000"
+  GRAFANA_PUBLIC_URL: "http://114.55.117.211:30080/grafana"
+  GRAFANA_PROVISIONING_ENABLED: "true"
+  GRAFANA_ADMIN_SECRET_NAMESPACE: "monitoring"
+  GRAFANA_ADMIN_SECRET_NAME: "monitoring-grafana"
+  GRAFANA_DATA_PROXY_URL: "http://monitor-backend.platform.svc.cluster.local:8000/api/v1/grafana/proxy"
+  GRAFANA_SSO_MODE: "auth-proxy"
+  BLACKBOX_EXPORTER_URL: "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
   AI_API_BASE_URL: "https://api.deepseek.com"
   AI_MODEL: "deepseek-v4-flash"
 ---
