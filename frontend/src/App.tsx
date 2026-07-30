@@ -1731,6 +1731,29 @@ export default function App() {
         </Col>
       </Row>
 
+      {selectedCluster ? (
+        <Card className="section" title="Agent 安装命令" extra={<Tag>{selectedCluster.name}</Tag>}>
+          {clusterInstall?.cluster_id === selectedCluster.id ? (
+            <Space direction="vertical" className="fullWidth" size={12}>
+              <Alert
+                type="warning"
+                showIcon
+                message="执行前检查平台 API 地址"
+                description={
+                  <>
+                    当前命令使用 <code>{clusterInstall.platform_api_url}</code>。如果被监控集群无法访问该地址，请替换命令中的 <code>PLATFORM_API_URL</code>，并保留 <code>/api/v1</code>。需要采集指定命名空间的普通日志时，可把 <code>LOG_NAMESPACES</code> 改为逗号分隔的命名空间；默认只采集异常 Pod 日志。
+                  </>
+                }
+              />
+              <Input.TextArea value={clusterInstall.install_command} rows={18} readOnly />
+              <Space wrap>
+                <Button type="primary" onClick={() => copyText(clusterInstall.install_command).then(() => message.success('已复制安装命令')).catch((error: Error) => message.error('复制失败：' + error.message))}>复制安装命令</Button>
+                <Button icon={<ReloadOutlined />} onClick={() => loadClusterDetails(selectedCluster.id)}>重新生成</Button>
+              </Space>
+            </Space>
+          ) : <Empty description="正在生成安装命令" />}
+        </Card>
+      ) : null}
       <Card
         className="section clusterWorkspace"
         title={selectedCluster ? `${selectedCluster.name} - 集群监控` : '集群监控'}
@@ -1833,13 +1856,6 @@ export default function App() {
                     </div>
                     <Table rowKey="id" dataSource={filteredClusterLogs} size="small" pagination={{ pageSize: 12 }} scroll={{ x: 1000 }} columns={[{ title: '时间', dataIndex: 'created_at', width: 180, render: (value: string) => new Date(value).toLocaleString() }, { title: '命名空间', dataIndex: 'payload', width: 140, render: (value: Record<string, unknown>) => String(value.namespace || '-') }, { title: 'Pod', dataIndex: 'payload', width: 220, render: (value: Record<string, unknown>) => String(value.pod || '-') }, { title: '容器', dataIndex: 'payload', width: 160, render: (value: Record<string, unknown>) => String(value.container || '-') }, { title: '等级', dataIndex: 'level', width: 90, render: (value: string) => <Tag color={value === 'error' ? 'red' : value === 'warning' ? 'orange' : 'blue'}>{value || 'info'}</Tag> }, { title: '日志内容', dataIndex: 'message', render: (value: string) => <pre className="logLine">{value}</pre> }]} />
                   </>,
-                },
-                {
-                  key: 'agent', label: 'Agent 安装', children: clusterInstall ? <Space direction="vertical" className="fullWidth" size={12}>
-                    <Alert type="warning" showIcon message="执行前检查平台 API 地址" description={<>当前命令使用 <code>{clusterInstall.platform_api_url}</code>。如果被监控集群无法访问该地址，请替换 <code>PLATFORM_API_URL</code>，并保留 <code>/api/v1</code>。需要采集指定命名空间的普通日志时，可把 <code>LOG_NAMESPACES</code> 改为逗号分隔的命名空间；默认只采集异常 Pod 日志。</>} />
-                    <Input.TextArea value={clusterInstall.install_command} rows={18} readOnly />
-                    <Space><Button onClick={() => copyText(clusterInstall.install_command).then(() => message.success('已复制安装命令')).catch((error: Error) => message.error('复制失败：' + error.message))}>复制命令</Button><Button onClick={() => loadClusterDetails(selectedCluster.id)}>重新生成</Button></Space>
-                  </Space> : <Empty description="安装命令加载失败" />,
                 },
               ]}
             />
