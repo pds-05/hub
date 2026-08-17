@@ -11,7 +11,7 @@ import './styles.css';
 
 const { Header, Content, Sider } = Layout;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
-const GRAFANA_URL = (import.meta.env.VITE_GRAFANA_URL || 'http://114.55.117.211:30080/grafana').replace(/\/$/, '');
+const GRAFANA_URL = (import.meta.env.VITE_GRAFANA_URL || 'https://pdsaiops.com/grafana').replace(/\/$/, '');
 
 type PageKey = GuidePageKey;
 type HandlingStatus = 'new' | 'acknowledged' | 'investigating' | 'mitigating' | 'watching' | 'resolved' | 'closed';

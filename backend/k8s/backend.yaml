@@ -56,7 +56,7 @@ data:
   ALERTMANAGER_URL: "http://monitoring-ack-prometheus-alertmanager.monitoring.svc.cluster.local:9093"
   LOKI_URL: "http://loki-gateway.logging.svc.cluster.local"
   GRAFANA_URL: "http://monitoring-grafana.monitoring.svc.cluster.local:80/grafana"
-  GRAFANA_PUBLIC_URL: "http://114.55.117.211:30080/grafana"
+  GRAFANA_PUBLIC_URL: "https://pdsaiops.com/grafana"
   GRAFANA_PROVISIONING_ENABLED: "true"
   GRAFANA_ADMIN_SECRET_NAMESPACE: "monitoring"
   GRAFANA_ADMIN_SECRET_NAME: "monitoring-grafana"

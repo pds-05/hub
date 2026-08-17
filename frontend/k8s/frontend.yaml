@@ -62,10 +62,17 @@ kind: Ingress
 metadata:
   name: monitor-frontend
   namespace: platform
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - pdsaiops.com
+      secretName: pdsaiops-com-tls
   rules:
-    - host: monitor.local
+    - host: pdsaiops.com
       http:
         paths:
           - path: /

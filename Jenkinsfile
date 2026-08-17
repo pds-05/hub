@@ -22,7 +22,7 @@ pipeline {
         FRONTEND_IMAGE = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/monitor-frontend"
         AGENT_IMAGE = "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/monitor-agent"
         K8S_NAMESPACE = 'platform'
-        GRAFANA_PUBLIC_URL = 'http://114.55.117.211:30080/grafana'
+        GRAFANA_PUBLIC_URL = 'https://pdsaiops.com/grafana'
     }
 
     stages {
@@ -170,7 +170,7 @@ pipeline {
                             python3 -c "from pathlib import Path; p=Path('frontend/nginx.conf'); data=p.read_bytes(); p.write_bytes(data[3:] if data.startswith(bytes([239,187,191])) else data)"
                             docker build \
                               --build-arg VITE_API_BASE_URL=/api/v1 \
-                              --build-arg VITE_GRAFANA_URL=http://114.55.117.211:30080/grafana \
+                              --build-arg VITE_GRAFANA_URL=https://pdsaiops.com/grafana \
                               -t "$FRONTEND_IMAGE:$IMAGE_TAG" \
                               -t "$FRONTEND_IMAGE:latest" \
                               frontend
@@ -297,7 +297,7 @@ pipeline {
                                 test "$(kubectl -n monitoring get service monitoring-grafana-internal -o jsonpath='{.spec.type}')" = "ClusterIP"
                                 kubectl -n monitoring delete service monitoring-grafana-nodeport --ignore-not-found
                                 test -z "$(kubectl -n monitoring get service monitoring-grafana-nodeport --ignore-not-found -o name)"
-                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import os; assert os.environ.get("GRAFANA_PUBLIC_URL") == "http://114.55.117.211:30080/grafana"'
+                                kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import os; assert os.environ.get("GRAFANA_PUBLIC_URL") == "https://pdsaiops.com/grafana"'
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import urllib.request; assert urllib.request.urlopen("http://monitoring-grafana.monitoring.svc.cluster.local:80/grafana/api/health", timeout=10).status == 200'
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c 'import urllib.request; assert urllib.request.urlopen("http://blackbox-exporter.monitoring.svc.cluster.local:9115/-/healthy", timeout=10).status == 200'
                             '''
