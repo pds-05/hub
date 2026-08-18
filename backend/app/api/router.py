@@ -1,6 +1,6 @@
 ﻿from fastapi import APIRouter
 
-from app.api.routes import alert_events, alert_rules, assistant, auth, clusters, grafana, health, monitoring, notification_channels, notification_records, platform, targets
+from app.api.routes import alert_events, alert_rules, assistant, assistant_tools, auth, clusters, grafana, health, monitoring, notification_channels, notification_records, platform, targets
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -16,3 +16,4 @@ api_router.include_router(platform.router)
 api_router.include_router(monitoring.router)
 api_router.include_router(grafana.router)
 api_router.include_router(assistant.router)
+api_router.include_router(assistant_tools.router)

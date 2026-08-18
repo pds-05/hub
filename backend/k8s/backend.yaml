@@ -65,6 +65,10 @@ data:
   BLACKBOX_EXPORTER_URL: "http://blackbox-exporter.monitoring.svc.cluster.local:9115"
   AI_API_BASE_URL: "https://api.deepseek.com"
   AI_MODEL: "deepseek-v4-flash"
+  DIFY_TOOL_PUBLIC_BASE_URL: "https://pdsaiops.com/api/v1/assistant/tools"
+  AI_DIAGNOSIS_TOKEN_TTL_MINUTES: "10"
+  AI_DIAGNOSIS_MAX_TOOL_CALLS: "5"
+  AI_DIAGNOSIS_TOOL_TIMEOUT_SECONDS: "10"
 ---
 apiVersion: apps/v1
 kind: Deployment

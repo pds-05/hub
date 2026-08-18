@@ -52,6 +52,7 @@ for module_name, class_name in (
     sys.modules.setdefault(module_name, module)
 
 from app.services.grafana_provisioner import GrafanaProvisioner
+from app.services.grafana_security import effective_proxy_secret
 
 
 class GrafanaProvisionerTest(unittest.TestCase):
@@ -74,9 +75,10 @@ class GrafanaProvisionerTest(unittest.TestCase):
 
         datasources = provisioner._datasource_definitions(user)
 
-        self.assertEqual(datasources[0]["url"], "http://backend/api/v1/grafana/proxy/prometheus/7")
-        self.assertEqual(datasources[1]["url"], "http://backend/api/v1/grafana/proxy/loki/7")
-        self.assertEqual(datasources[0]["secureJsonData"]["httpHeaderValue1"], "proxy-secret")
+        proxy_base = provisioner.settings.grafana_data_proxy_url.rstrip("/")
+        self.assertEqual(datasources[0]["url"], f"{proxy_base}/prometheus/7")
+        self.assertEqual(datasources[1]["url"], f"{proxy_base}/loki/7")
+        self.assertEqual(datasources[0]["secureJsonData"]["httpHeaderValue1"], effective_proxy_secret(provisioner.settings))
 
     def test_rabbitmq_queries_are_scoped_to_user_and_target(self) -> None:
         target = SimpleNamespace(id=19, user_id=7, target_type="exporter", exporter_kind="rabbitmq")

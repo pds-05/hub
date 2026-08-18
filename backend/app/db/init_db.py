@@ -1,6 +1,8 @@
 from sqlalchemy import inspect, text
 
 from app.db.session import Base, engine
+from app.models.ai_diagnosis import AIDiagnosis
+from app.models.ai_tool_call_audit import AIToolCallAudit
 from app.models.alert_event import AlertEvent
 from app.models.alert_event_activity import AlertEventActivity
 from app.models.alert_rule import AlertRule
@@ -19,6 +21,8 @@ from app.models.user import User
 def init_db() -> None:
     # Import models before create_all so SQLAlchemy knows their tables.
     _ = (
+        AIDiagnosis,
+        AIToolCallAudit,
         AlertEvent,
         AlertEventActivity,
         AlertRule,
