@@ -268,7 +268,10 @@ pipeline {
                                   GRAFANA_PUBLIC_URL="$GRAFANA_PUBLIC_URL" \
                                   GRAFANA_PROVISIONING_ENABLED=true \
                                   GRAFANA_DATA_PROXY_URL=http://monitor-backend.platform.svc.cluster.local:8000/api/v1/grafana/proxy \
-                                  GRAFANA_SSO_MODE=auth-proxy
+                                  GRAFANA_SSO_MODE=auth-proxy \
+                                  DIFY_TOOL_PUBLIC_BASE_URL=https://pdsaiops.com/api/v1/assistant/tools \
+                                  DIFY_API_BASE_URL=https://dify.pdsaiops.com/v1 \
+                                  DIFY_DIAGNOSIS_TIMEOUT_SECONDS=90
 
                                 kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-backend \
                                   monitor-backend="$BACKEND_IMAGE:$IMAGE_TAG"
@@ -288,7 +291,7 @@ pipeline {
 
                                 test "$(kubectl -n "$K8S_NAMESPACE" get deployment monitor-backend -o jsonpath='{.spec.template.spec.serviceAccountName}')" = "monitor-backend"
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- \
-                                  sh -c 'test "$PROMETHEUS_SCRAPE_CONFIG_ENABLED" = "true" && test "$TARGET_ALERT_EVALUATION_ENABLED" = "true"'
+                                  sh -c 'test "$PROMETHEUS_SCRAPE_CONFIG_ENABLED" = "true" && test "$TARGET_ALERT_EVALUATION_ENABLED" = "true" && test "$DIFY_API_BASE_URL" = "https://dify.pdsaiops.com/v1" && test -n "$DIFY_APP_API_KEY" && test -n "$DIFY_TOOL_SECRET"'
                                 kubectl -n "$K8S_NAMESPACE" exec deployment/monitor-backend -- python -c \
                                   'import ssl, urllib.request; token=open("/var/run/secrets/kubernetes.io/serviceaccount/token", encoding="utf-8").read().strip(); context=ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); request=urllib.request.Request("https://kubernetes.default.svc/apis/monitoring.coreos.com/v1alpha1/namespaces/monitoring/scrapeconfigs", headers={"Authorization": "Bearer " + token}); response=urllib.request.urlopen(request, context=context, timeout=10); assert response.status == 200'
 

@@ -66,6 +66,8 @@ data:
   AI_API_BASE_URL: "https://api.deepseek.com"
   AI_MODEL: "deepseek-v4-flash"
   DIFY_TOOL_PUBLIC_BASE_URL: "https://pdsaiops.com/api/v1/assistant/tools"
+  DIFY_API_BASE_URL: "https://dify.pdsaiops.com/v1"
+  DIFY_DIAGNOSIS_TIMEOUT_SECONDS: "90"
   AI_DIAGNOSIS_TOKEN_TTL_MINUTES: "10"
   AI_DIAGNOSIS_MAX_TOOL_CALLS: "5"
   AI_DIAGNOSIS_TOOL_TIMEOUT_SECONDS: "10"

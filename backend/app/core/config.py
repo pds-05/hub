@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     ai_model: str = "deepseek-v4-flash"
     dify_tool_secret: str = ""
     dify_tool_public_base_url: str = ""
+    dify_api_base_url: str = ""
+    dify_app_api_key: str = ""
+    dify_diagnosis_timeout_seconds: int = 90
     ai_diagnosis_token_ttl_minutes: int = 10
     ai_diagnosis_max_tool_calls: int = 5
     ai_diagnosis_tool_timeout_seconds: int = 10
