@@ -232,6 +232,7 @@ pipeline {
                                 export KUBECONFIG="$KUBECONFIG_FILE"
 
                                 kubectl apply -f k8s/monitor-backend-scrapeconfig-rbac.yaml
+                                kubectl apply -f k8s/monitor-frontend-ingress-timeouts.yaml
                                 kubectl apply -f k8s/blackbox-exporter.yaml
 
                                 kubectl -n monitoring set env deployment/monitoring-grafana \
