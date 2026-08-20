@@ -90,6 +90,8 @@ pipeline {
                         test "$(kubectl auth can-i get deployments.apps -n "$K8S_NAMESPACE")" = "yes"
                         test "$(kubectl auth can-i patch deployments.apps -n "$K8S_NAMESPACE")" = "yes"
                         test "$(kubectl auth can-i create serviceaccounts -n "$K8S_NAMESPACE")" = "yes"
+                        test "$(kubectl auth can-i get ingress/monitor-frontend -n "$K8S_NAMESPACE")" = "yes"
+                        test "$(kubectl auth can-i patch ingress/monitor-frontend -n "$K8S_NAMESPACE")" = "yes"
                         test "$(kubectl auth can-i create roles.rbac.authorization.k8s.io -n monitoring)" = "yes"
                         test "$(kubectl auth can-i create rolebindings.rbac.authorization.k8s.io -n monitoring)" = "yes"
                         test "$(kubectl auth can-i create deployments.apps -n monitoring)" = "yes"
@@ -232,7 +234,7 @@ pipeline {
                                 export KUBECONFIG="$KUBECONFIG_FILE"
 
                                 kubectl apply -f k8s/monitor-backend-scrapeconfig-rbac.yaml
-                                kubectl apply -f k8s/monitor-frontend-ingress-timeouts.yaml
+                                kubectl -n "$K8S_NAMESPACE" patch ingress monitor-frontend --type merge --patch-file k8s/monitor-frontend-ingress-timeouts.yaml
                                 kubectl apply -f k8s/blackbox-exporter.yaml
 
                                 kubectl -n monitoring set env deployment/monitoring-grafana \
