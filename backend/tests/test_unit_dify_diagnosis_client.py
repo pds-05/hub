@@ -54,7 +54,7 @@ class DifyDiagnosisClientTest(unittest.TestCase):
         with self.assertRaises(DifyDiagnosisNotConfiguredError):
             asyncio.run(client.diagnose(question="diagnose", diagnosis_token="token", diagnosis_id=1))
 
-    def test_sends_only_question_and_short_lived_diagnosis_token(self):
+    def test_sends_short_lived_diagnosis_token_in_inputs_and_internal_query_context(self):
         client = DifyDiagnosisClient(base_url="https://dify.example.com/v1", api_key="app-key", timeout_seconds=90)
         FakeAsyncClient.requests = []
         FakeAsyncClient.response_lines = [
@@ -79,6 +79,9 @@ class DifyDiagnosisClientTest(unittest.TestCase):
         self.assertEqual(request["url"], "https://dify.example.com/v1/chat-messages")
         self.assertEqual(request["headers"]["Authorization"], "Bearer app-key")
         self.assertEqual(request["json"]["inputs"], {"diagnosis_token": "short-lived-token"})
+        self.assertIn("diagnosis_token: short-lived-token", request["json"]["query"])
+        self.assertIn("Never reveal, quote, persist, or reuse this token", request["json"]["query"])
+        self.assertIn("User diagnosis request:\ncheck RabbitMQ", request["json"]["query"])
         self.assertEqual(request["json"]["response_mode"], "streaming")
         self.assertEqual(request["json"]["user"], "platform-diagnosis-42")
         self.assertNotIn("target_id", request["json"])

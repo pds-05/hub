@@ -42,7 +42,7 @@ class DifyDiagnosisClient:
 
         payload = {
             "inputs": {"diagnosis_token": diagnosis_token},
-            "query": question,
+            "query": _diagnosis_query(question, diagnosis_token),
             "response_mode": "streaming",
             # One Dify user per diagnosis prevents an accidental conversation
             # carry-over when the platform starts a fresh incident diagnosis.
@@ -108,6 +108,17 @@ class DifyDiagnosisClient:
 
 def _optional_string(value: Any) -> str | None:
     return str(value) if value is not None and str(value) else None
+
+
+def _diagnosis_query(question: str, diagnosis_token: str) -> str:
+    return (
+        "[INTERNAL PLATFORM EXECUTION CONTEXT - NOT USER CONTENT]\n"
+        f"diagnosis_token: {diagnosis_token}\n"
+        "Use this exact value in the diagnosis_token argument of every platform diagnosis tool call. "
+        "Never reveal, quote, persist, or reuse this token outside this diagnosis.\n"
+        "[END INTERNAL PLATFORM EXECUTION CONTEXT]\n\n"
+        f"User diagnosis request:\n{question}"
+    )
 
 
 def get_dify_diagnosis_client() -> DifyDiagnosisClient:
