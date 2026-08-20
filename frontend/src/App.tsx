@@ -69,19 +69,13 @@ type ClusterSnapshot = {
 };
 type ClusterOverview = { cluster: ManagedCluster; heartbeat?: ClusterAgentHeartbeat | null; snapshot: ClusterSnapshot; alerts: ClusterAgentReport[]; logs: ClusterAgentReport[]; };
 
-type AIAnalysis = {
-  enabled: boolean;
+type AIDiagnosis = {
+  id: number;
+  status: string;
   provider?: string | null;
-  model?: string | null;
-  summary: string;
-  note?: string;
-  risks?: string[];
-  suggestions?: string[];
-  local_fallback?: {
-    summary?: string;
-    risks?: string[];
-    suggestions?: string[];
-  };
+  report_summary?: string | null;
+  error_message?: string | null;
+  tool_calls_used: number;
 };
 
 type AIChatMessage = {
@@ -530,7 +524,7 @@ const pageTitles: Record<PageKey, string> = {
   channels: '通知渠道',
   records: '通知记录',
   logs: '日志查询',
-  assistant: 'AI 助手',
+  assistant: 'Dify 诊断助手',
   grafana: 'Grafana 图表',
   platformHealth: '平台健康',};
 
@@ -600,7 +594,7 @@ export default function App() {
   const [grafanaError, setGrafanaError] = useState('');
   const [aiQuestion, setAiQuestion] = useState('分析当前监控对象和所选告警，给出可能原因、验证命令和恢复步骤');
   const [aiInput, setAiInput] = useState('');
-  const [aiResult, setAiResult] = useState<AIAnalysis | null>(null);
+  const [aiResult, setAiResult] = useState<AIDiagnosis | null>(null);
   const [aiSessionActive, setAiSessionActive] = useState(false);
   const [aiMessages, setAiMessages] = useState<AIChatMessage[]>([]);
   const [loginForm] = Form.useForm();
@@ -1216,27 +1210,7 @@ export default function App() {
   }
 
 
-  function buildAIContext(conversation: AIChatMessage[], activities: AlertEventActivity[] = selectedAlertActivities) {
-    return {
-      context_type: 'analysis_session',
-      target: selectedTarget,
-      latest_check: selectedLatestCheck,
-      recent_checks: selectedTargetChecks.slice(0, 10),
-      selected_alert: selectedAlert,
-      selected_alert_activities: activities.slice(0, 20),
-      selected_alert_activity_summary: {
-        total: activities.length,
-        last_action: activities[0]?.action || null,
-        last_note: activities[0]?.note || null,
-        last_actor: activities[0]?.actor || null,
-        last_created_at: activities[0]?.created_at || null,
-      },
-      target_alerts: targetAlerts.slice(0, 20),
-      conversation: conversation.slice(-10),
-    };
-  }
-
-  async function sendAIMessage(content: string, baseMessages: AIChatMessage[] = aiMessages, activityOverride?: AlertEventActivity[]) {
+  async function sendAIMessage(content: string, baseMessages: AIChatMessage[] = aiMessages) {
     if (!token || !selectedTarget) return;
     const question = content.trim();
     if (!question) return;
@@ -1246,18 +1220,27 @@ export default function App() {
     setAiInput('');
     setLoading(true);
     try {
-      const result = await request<AIAnalysis>('/assistant/analyze', token, {
+      const result = await request<AIDiagnosis>('/assistant/diagnoses', token, {
         method: 'POST',
-        body: JSON.stringify({ question, context: buildAIContext(nextMessages, activityOverride) }),
+        body: JSON.stringify({
+          question,
+          target_id: selectedTarget.id,
+          event_id: selectedAlert?.id,
+        }),
       });
-      const assistantMessage: AIChatMessage = { role: 'assistant', content: result.summary, created_at: new Date().toISOString() };
+      const answer = result.report_summary?.trim();
+      if (result.status !== 'completed' || !answer) {
+        throw new Error(result.error_message || 'Dify diagnosis did not return a report');
+      }
+      const assistantMessage: AIChatMessage = { role: 'assistant', content: answer, created_at: new Date().toISOString() };
       setAiResult(result);
       setAiMessages([...nextMessages, assistantMessage]);
       setAiSessionActive(true);
-      message.success('AI 分析完成');
+      message.success('Dify 诊断完成');
     } catch (error) {
-      handleRequestError(error, 'AI 分析失败');
+      handleRequestError(error, 'Dify 诊断失败');
       setAiMessages(baseMessages);
+      setAiSessionActive(baseMessages.length > 0);
     } finally {
       setLoading(false);
     }
@@ -1273,11 +1256,10 @@ export default function App() {
       return;
     }
     const firstQuestion = aiQuestion || '分析当前监控对象和所选告警，给出恢复步骤';
-    const activities = await loadSelectedAlertActivities(selectedAlert.id);
     setAiSessionActive(true);
     setAiMessages([]);
     setAiResult(null);
-    await sendAIMessage(firstQuestion, [], activities);
+    await sendAIMessage(firstQuestion, []);
   }
 
   async function fetchEventActivities(eventId: number) {
@@ -1330,8 +1312,8 @@ export default function App() {
   }
 
   async function saveAIResultAsAlertNote() {
-    if (!token || !selectedAlert || !aiResult?.summary) return;
-    const note = `AI 分析摘要：\n${aiResult.summary}`.slice(0, 1000);
+    if (!token || !selectedAlert || !aiResult?.report_summary) return;
+    const note = `Dify 诊断摘要：\n${aiResult.report_summary}`.slice(0, 1000);
     setLoading(true);
     try {
       await request<AlertEventActivity>(`/alert-events/${selectedAlert.id}/activities`, token, {
@@ -1425,7 +1407,7 @@ export default function App() {
     void loadSelectedAlertActivities(selectedEvent.id);
     setAiQuestion(`分析告警 ${selectedEvent.rule_name}，实例 ${selectedEvent.instance}。请给出可能原因、验证命令、恢复步骤和风险提示。`);
     setActivePage('assistant');
-    message.info('已选择告警上下文，可以开始 AI 分析会话。');
+    message.info('已选择告警上下文，可以开始 Dify 诊断。');
   }
   function exitAIAnalysis() {
     setAiSessionActive(false);
@@ -2060,18 +2042,18 @@ export default function App() {
               ]}
             />
           </Card>
-          {aiResult?.summary ? <Button icon={<CheckCircleOutlined />} onClick={saveAIResultAsAlertNote}>保存当前 AI 分析到处理记录</Button> : null}
+          {aiResult?.report_summary ? <Button icon={<CheckCircleOutlined />} onClick={saveAIResultAsAlertNote}>保存当前 Dify 诊断到处理记录</Button> : null}
         </Space>
       ) : <Empty description="请选择告警事件" />}
     </Drawer>
   );
   const renderAssistant = () => (
     <Space direction="vertical" className="fullWidth" size={16}>
-      <Card title="AI 告警分析助手">
+      <Card title="AIOps Dify 诊断助手">
         <Alert
           type="info"
           showIcon
-          message="正常监控不会调用大模型。只有你选择监控对象和告警，并点击开始分析或继续追问时，平台才会把该上下文发送给 AI。"
+          message="只有手动发起诊断时，平台才会调用 Dify。每次诊断独立审计，并通过只读工具获取告警、指标和日志。"
         />
       </Card>
       <Row gutter={[16, 16]}>
@@ -2140,8 +2122,8 @@ export default function App() {
         </Col>
         <Col xs={24} lg={16}>
           <Card
-            title="分析会话"
-            extra={<Space><Button type="primary" icon={<RobotOutlined />} loading={loading} onClick={startAIAnalysis} disabled={!selectedTarget || !selectedAlert || aiSessionActive}>开始分析</Button><Button danger onClick={exitAIAnalysis} disabled={!aiSessionActive && aiMessages.length === 0}>退出分析</Button></Space>}
+            title="Dify 诊断记录"
+            extra={<Space><Button type="primary" icon={<RobotOutlined />} loading={loading} onClick={startAIAnalysis} disabled={!selectedTarget || !selectedAlert || aiSessionActive}>开始 Dify 诊断</Button><Button danger onClick={exitAIAnalysis} disabled={!aiSessionActive && aiMessages.length === 0}>结束诊断</Button></Space>}
           >
             <Space direction="vertical" className="fullWidth" size={12}>
               {!aiSessionActive && aiMessages.length === 0 ? (
@@ -2150,10 +2132,10 @@ export default function App() {
               <div className="chatTranscript">
                 {aiMessages.length ? aiMessages.map((item, index) => (
                   <div key={`${item.created_at}-${index}`} className={`chatMessage ${item.role}`}>
-                    <div className="chatRole">{item.role === 'user' ? '使用人员' : 'AI 助手'} · {new Date(item.created_at).toLocaleTimeString()}</div>
+                    <div className="chatRole">{item.role === 'user' ? '使用人员' : 'Dify 诊断助手'} · {new Date(item.created_at).toLocaleTimeString()}</div>
                     <div className="chatContent">{item.content}</div>
                   </div>
-                )) : <Empty description="开始分析后，这里会保留本次运维对话上下文" />}
+                )) : <Empty description="诊断完成后，这里会保留本次可审计的 Dify 诊断结果" />}
               </div>
               {aiSessionActive ? (
                 <Space.Compact className="fullWidth">
@@ -2167,12 +2149,12 @@ export default function App() {
                         void sendAIMessage(aiInput);
                       }
                     }}
-                    placeholder="继续追问，例如：这一步怎么验证？如果是 Redis 连接数高应该先查什么？"
+                    placeholder="补充诊断要求，例如：这一步怎么验证？如果是 Redis 连接数高应该先查什么？"
                   />
                   <Button type="primary" icon={<SendOutlined />} loading={loading} onClick={() => sendAIMessage(aiInput)}>发送</Button>
                 </Space.Compact>
               ) : null}
-              {aiResult?.summary ? <Button icon={<CheckCircleOutlined />} onClick={saveAIResultAsAlertNote}>保存当前 AI 分析到处理记录</Button> : null}
+              {aiResult?.report_summary ? <Button icon={<CheckCircleOutlined />} onClick={saveAIResultAsAlertNote}>保存当前 Dify 诊断到处理记录</Button> : null}
             </Space>
           </Card>
         </Col>
@@ -2545,7 +2527,7 @@ export default function App() {
     { key: 'channels', icon: <MailOutlined />, label: '通知渠道' },
     { key: 'records', icon: <ProfileOutlined />, label: '通知记录' },
     { key: 'logs', icon: <ProfileOutlined />, label: '日志查询' },
-    { key: 'assistant', icon: <RobotOutlined />, label: 'AI 助手' },
+    { key: 'assistant', icon: <RobotOutlined />, label: 'Dify 诊断助手' },
     { key: 'grafana', icon: <BarChartOutlined />, label: 'Grafana 图表' },
     ...(currentUser?.role === 'root' ? [{ key: 'platformHealth', icon: <HeartOutlined />, label: '平台健康' }] : []),
   ];
