@@ -20,23 +20,23 @@ def dify_tool_openapi(public_base_url: str) -> dict:
                     "properties": {"diagnosis_token": {"type": "string", "description": "Short-lived token supplied by the platform for this diagnosis only."}},
                 },
                 "MetricsToolRequest": {
-                    "allOf": [
-                        {"$ref": "#/components/schemas/TokenToolRequest"},
-                        {"type": "object", "required": ["metric_type"], "properties": {
-                            "metric_type": {"type": "string", "enum": ["availability", "response_time", "cpu", "memory", "disk", "connections", "queue_messages", "consumers", "error_rate"]},
-                            "minutes": {"type": "integer", "default": 30, "minimum": 1, "maximum": 60},
-                        }},
-                    ],
+                    "type": "object",
+                    "required": ["diagnosis_token", "metric_type"],
+                    "properties": {
+                        "diagnosis_token": {"type": "string", "description": "Short-lived token supplied by the platform for this diagnosis only."},
+                        "metric_type": {"type": "string", "enum": ["availability", "response_time", "cpu", "memory", "disk", "connections", "queue_messages", "consumers", "error_rate"]},
+                        "minutes": {"type": "integer", "default": 30, "minimum": 1, "maximum": 60},
+                    },
                 },
                 "LogsToolRequest": {
-                    "allOf": [
-                        {"$ref": "#/components/schemas/TokenToolRequest"},
-                        {"type": "object", "properties": {
-                            "keyword": {"type": "string", "maxLength": 200},
-                            "minutes": {"type": "integer", "default": 30, "minimum": 1, "maximum": 60},
-                            "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
-                        }},
-                    ],
+                    "type": "object",
+                    "required": ["diagnosis_token"],
+                    "properties": {
+                        "diagnosis_token": {"type": "string", "description": "Short-lived token supplied by the platform for this diagnosis only."},
+                        "keyword": {"type": "string", "maxLength": 200},
+                        "minutes": {"type": "integer", "default": 30, "minimum": 1, "maximum": 60},
+                        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+                    },
                 },
             },
         },

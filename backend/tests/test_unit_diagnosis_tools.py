@@ -104,6 +104,15 @@ class DiagnosisToolSecurityTest(unittest.TestCase):
         self.assertEqual(spec["servers"][0]["url"], "https://pdsaiops.com/api/v1/assistant/tools")
         self.assertIn("X-Dify-Tool-Secret", str(spec))
         self.assertNotIn("kubectl", str(spec).lower())
+        metrics_schema = spec["components"]["schemas"]["MetricsToolRequest"]
+        self.assertEqual(metrics_schema["required"], ["diagnosis_token", "metric_type"])
+        self.assertEqual(set(metrics_schema["properties"]), {"diagnosis_token", "metric_type", "minutes"})
+        self.assertNotIn("allOf", metrics_schema)
+
+        logs_schema = spec["components"]["schemas"]["LogsToolRequest"]
+        self.assertEqual(logs_schema["required"], ["diagnosis_token"])
+        self.assertEqual(set(logs_schema["properties"]), {"diagnosis_token", "keyword", "minutes", "limit"})
+        self.assertNotIn("allOf", logs_schema)
 
 
 if __name__ == "__main__":
