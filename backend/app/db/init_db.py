@@ -52,8 +52,10 @@ def init_db() -> None:
     migrate_alert_events_handling_status()
     migrate_alert_rules_deleted_at()
     migrate_soft_delete_columns()
+    migrate_notification_records_alert_event_nullable()
     migrate_users_role()
     migrate_ai_diagnosis_evaluation_results()
+
 
 def migrate_ai_diagnosis_evaluation_results() -> None:
     inspector = inspect(engine)
@@ -71,6 +73,7 @@ def migrate_ai_diagnosis_evaluation_results() -> None:
         for name, definition in additions.items():
             if name not in columns:
                 conn.execute(text(f"alter table ai_diagnosis_evaluation_results add column {name} {definition}"))
+
 
 def migrate_monitor_targets_user_id() -> None:
     inspector = inspect(engine)
@@ -173,6 +176,20 @@ def migrate_soft_delete_columns() -> None:
         with engine.begin() as conn:
             conn.execute(text(f"alter table {table_name} add column deleted_at timestamp with time zone"))
             conn.execute(text(f"create index if not exists ix_{table_name}_deleted_at on {table_name} (deleted_at)"))
+
+
+def migrate_notification_records_alert_event_nullable() -> None:
+    inspector = inspect(engine)
+    if "notification_records" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"]: column for column in inspector.get_columns("notification_records")}
+    alert_event_id = columns.get("alert_event_id")
+    if alert_event_id is None or alert_event_id.get("nullable", False):
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text("alter table notification_records alter column alert_event_id drop not null"))
 
 
 def migrate_users_role() -> None:

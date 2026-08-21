@@ -152,7 +152,7 @@ async def test_notification_channel(
     record = NotificationRecord(
         user_id=current_user.id,
         channel_id=channel.id,
-        alert_event_id=0,
+        alert_event_id=None,
         notification_type="triggered",
         status="pending",
         title="测试通知：智能运维平台",

@@ -12,7 +12,8 @@ class NotificationRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     channel_id: Mapped[int] = mapped_column(ForeignKey("notification_channels.id"), index=True, nullable=False)
-    alert_event_id: Mapped[int] = mapped_column(ForeignKey("alert_events.id"), index=True, nullable=False)
+    # Test notifications are not associated with a real alert event.
+    alert_event_id: Mapped[int] = mapped_column(ForeignKey("alert_events.id"), index=True, nullable=True)
     notification_type: Mapped[str] = mapped_column(String(30), index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(30), index=True, nullable=False, default="pending")
     title: Mapped[str] = mapped_column(String(200), nullable=False)

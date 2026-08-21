@@ -31,6 +31,7 @@ def send_email_notification(channel: NotificationChannel, record: NotificationRe
     use_tls = config_bool(config.get("use_tls"), settings.smtp_use_tls)
     use_ssl = config_bool(config.get("use_ssl"), smtp_port == 465)
     to_address = config.get("to")
+    alert_event_label = str(record.alert_event_id) if record.alert_event_id is not None else "测试通知"
 
     if not smtp_host:
         raise ValueError("SMTP host is not configured. Please configure smtp_host in this email channel or SMTP_HOST in backend env.")
@@ -48,7 +49,7 @@ def send_email_notification(channel: NotificationChannel, record: NotificationRe
         f"---\n"
         f"通知类型：{record.notification_type}\n"
         f"通知记录 ID：{record.id}\n"
-        f"告警事件 ID：{record.alert_event_id}\n"
+        f"告警事件 ID：{alert_event_label}\n"
     )
 
     smtp_cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
