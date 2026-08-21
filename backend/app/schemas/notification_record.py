@@ -7,7 +7,7 @@ class NotificationRecordRead(BaseModel):
     id: int
     user_id: int
     channel_id: int
-    alert_event_id: int
+    alert_event_id: int | None
     notification_type: str
     status: str
     title: str
