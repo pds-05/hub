@@ -274,7 +274,8 @@ pipeline {
                                   GRAFANA_SSO_MODE=auth-proxy \
                                   DIFY_TOOL_PUBLIC_BASE_URL=https://pdsaiops.com/api/v1/assistant/tools \
                                   DIFY_API_BASE_URL=https://dify.pdsaiops.com/v1 \
-                                  DIFY_DIAGNOSIS_TIMEOUT_SECONDS=90
+                                  DIFY_DIAGNOSIS_TIMEOUT_SECONDS=90 \
+                                  AI_DIAGNOSIS_MAX_TOOL_CALLS=8
 
                                 kubectl -n "$K8S_NAMESPACE" set image deployment/monitor-backend \
                                   monitor-backend="$BACKEND_IMAGE:$IMAGE_TAG"

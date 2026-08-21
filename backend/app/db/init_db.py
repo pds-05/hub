@@ -2,6 +2,7 @@ from sqlalchemy import inspect, text
 
 from app.db.session import Base, engine
 from app.models.ai_diagnosis import AIDiagnosis
+from app.models.ai_diagnosis_evaluation import AIDiagnosisEvaluationCase, AIDiagnosisEvaluationResult, AIDiagnosisFeedback
 from app.models.ai_tool_call_audit import AIToolCallAudit
 from app.models.alert_event import AlertEvent
 from app.models.alert_event_activity import AlertEventActivity
@@ -12,6 +13,7 @@ from app.models.grafana_target_dashboard import GrafanaTargetDashboard
 from app.models.grafana_user_context import GrafanaUserContext
 from app.models.managed_cluster import ManagedCluster
 from app.models.monitor_target import MonitorTarget
+from app.models.service_dependency import ServiceDependency
 from app.models.notification_channel import NotificationChannel
 from app.models.notification_record import NotificationRecord
 from app.models.target_check_result import TargetCheckResult
@@ -22,6 +24,9 @@ def init_db() -> None:
     # Import models before create_all so SQLAlchemy knows their tables.
     _ = (
         AIDiagnosis,
+        AIDiagnosisEvaluationCase,
+        AIDiagnosisEvaluationResult,
+        AIDiagnosisFeedback,
         AIToolCallAudit,
         AlertEvent,
         AlertEventActivity,
@@ -33,6 +38,7 @@ def init_db() -> None:
         GrafanaUserContext,
         ManagedCluster,
         MonitorTarget,
+        ServiceDependency,
         NotificationChannel,
         NotificationRecord,
         TargetCheckResult,
@@ -47,7 +53,24 @@ def init_db() -> None:
     migrate_alert_rules_deleted_at()
     migrate_soft_delete_columns()
     migrate_users_role()
+    migrate_ai_diagnosis_evaluation_results()
 
+def migrate_ai_diagnosis_evaluation_results() -> None:
+    inspector = inspect(engine)
+    if "ai_diagnosis_evaluation_results" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("ai_diagnosis_evaluation_results")}
+    additions = {
+        "expected_evidence_terms": "json not null default '[]'",
+        "matched_evidence_terms": "json not null default '[]'",
+        "unsupported_evidence_terms": "json not null default '[]'",
+        "evidence_term_score": "double precision not null default 0",
+    }
+    with engine.begin() as conn:
+        for name, definition in additions.items():
+            if name not in columns:
+                conn.execute(text(f"alter table ai_diagnosis_evaluation_results add column {name} {definition}"))
 
 def migrate_monitor_targets_user_id() -> None:
     inspector = inspect(engine)

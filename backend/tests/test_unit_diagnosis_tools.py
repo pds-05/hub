@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.routes.assistant_tools import (
+    ContextToolRequest,
     MetricsToolRequest,
     TokenToolRequest,
     translate_tool_error,
@@ -78,6 +79,30 @@ class DiagnosisToolSecurityTest(unittest.TestCase):
             {"password": "***", "nested": {"token": "***"}},
         )
 
+    def test_related_alerts_exclude_the_selected_alert(self) -> None:
+        target = type('Target', (), {'id': 20})()
+        service = object.__new__(DiagnosisToolService)
+        service._dependency_context = lambda _user_id, _target_id: ([], {20: target})
+        service.db = type('Db', (), {'query': lambda *_args, **_kwargs: None})()
+
+        class Query:
+            def filter(self, *_args): return self
+            def order_by(self, *_args): return self
+            def limit(self, *_args): return self
+            def all(self):
+                return [
+                    type('Event', (), {'id': 7, 'last_triggered_at': None})(),
+                    type('Event', (), {'id': 8, 'last_triggered_at': None})(),
+                ]
+
+        service.db = type('Db', (), {'query': lambda *_args, **_kwargs: Query()})()
+        service._event_payload = lambda event: {'id': event.id}
+        service._target_reference = lambda item: {'id': item.id}
+
+        with patch('app.services.diagnosis_tool_service._event_belongs_to_target', return_value=True):
+            alerts = service._related_alert_payloads(1, target, 60, 10, exclude_event_id=7)
+
+        self.assertEqual([item['id'] for item in alerts], [8])
     def test_tool_secret_is_required_and_constant_time_compared(self) -> None:
         with patch.dict(os.environ, {"DIFY_TOOL_SECRET": "expected"}, clear=False):
             verify_dify_tool_secret("expected")
@@ -94,12 +119,17 @@ class DiagnosisToolSecurityTest(unittest.TestCase):
         self.assertEqual(translate_tool_error(DiagnosisTokenError("expired")).status_code, 401)
         self.assertEqual(translate_tool_error(DiagnosisToolLimitError("limit")).status_code, 429)
 
-    def test_openapi_exports_only_the_four_read_only_tools(self) -> None:
+    def test_context_request_has_bounded_time_and_limit(self) -> None:
+        self.assertEqual(ContextToolRequest(diagnosis_token="a" * 32).minutes, 60)
+        with self.assertRaises(ValidationError):
+            ContextToolRequest(diagnosis_token="a" * 32, minutes=241)
+
+    def test_openapi_exports_only_the_eight_read_only_tools(self) -> None:
         spec = dify_tool_openapi("https://pdsaiops.com/api/v1/assistant/tools")
 
         self.assertEqual(
             set(spec["paths"]),
-            {"/alert-context", "/target-status", "/target-metrics", "/target-logs"},
+            {"/alert-context", "/target-status", "/target-metrics", "/target-logs", "/related-alerts", "/kubernetes-events", "/service-dependencies", "/incident-timeline"},
         )
         self.assertEqual(spec["servers"][0]["url"], "https://pdsaiops.com/api/v1/assistant/tools")
         self.assertIn("X-Dify-Tool-Secret", str(spec))
@@ -113,7 +143,10 @@ class DiagnosisToolSecurityTest(unittest.TestCase):
         self.assertEqual(logs_schema["required"], ["diagnosis_token"])
         self.assertEqual(set(logs_schema["properties"]), {"diagnosis_token", "keyword", "minutes", "limit"})
         self.assertNotIn("allOf", logs_schema)
-
+        context_schema = spec["components"]["schemas"]["ContextToolRequest"]
+        self.assertEqual(context_schema["required"], ["diagnosis_token"])
+        self.assertEqual(set(context_schema["properties"]), {"diagnosis_token", "minutes", "limit"})
+        self.assertNotIn("allOf", context_schema)
 
 if __name__ == "__main__":
     unittest.main()

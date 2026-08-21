@@ -116,6 +116,8 @@ def _diagnosis_query(question: str, diagnosis_token: str) -> str:
         f"diagnosis_token: {diagnosis_token}\n"
         "Use this exact value in the diagnosis_token argument of every platform diagnosis tool call. "
         "Never reveal, quote, persist, or reuse this token outside this diagnosis.\n"
+        "Use only the read-only platform tools. Start with alert context and target status, then call metrics, logs, related alerts, service dependencies, Kubernetes events, or the incident timeline only when they add evidence. "
+        "In the final report, cite only tool names that actually returned evidence. Do not treat Kubernetes event context or service dependency topology as proof of root cause.\n"
         "[END INTERNAL PLATFORM EXECUTION CONTEXT]\n\n"
         f"User diagnosis request:\n{question}"
     )

@@ -9,13 +9,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.ai_diagnosis import AIDiagnosis
 from app.models.ai_tool_call_audit import AIToolCallAudit
 from app.models.alert_event import AlertEvent
 from app.models.alert_event_activity import AlertEventActivity
+from app.models.cluster_agent import ClusterAgentReport
+from app.models.managed_cluster import ManagedCluster
 from app.models.monitor_target import MonitorTarget
+from app.models.service_dependency import ServiceDependency
 from app.models.target_check_result import TargetCheckResult
 from app.models.user import User
 from app.services.logql_scope import scope_logql
@@ -90,14 +94,14 @@ class DiagnosisToolService:
         db: Session,
         *,
         token_ttl_minutes: int = 10,
-        max_tool_calls: int = 5,
+        max_tool_calls: int = 8,
         prometheus: PrometheusClient | None = None,
         loki: LokiClient | None = None,
         tool_timeout_seconds: int = 10,
     ) -> None:
         self.db = db
         self.token_ttl_minutes = max(1, min(token_ttl_minutes, 10))
-        self.max_tool_calls = max(1, min(max_tool_calls, 6))
+        self.max_tool_calls = max(1, min(max_tool_calls, 8))
         self.prometheus = prometheus or PrometheusClient()
         self.loki = loki or LokiClient()
         self.tool_timeout_seconds = max(1, min(tool_timeout_seconds, 10))
@@ -298,6 +302,265 @@ class DiagnosisToolService:
             self.complete_audit(diagnosis.id, "search_target_logs", started_at, error=exc)
             raise
 
+    def related_alerts(self, diagnosis_token: str, minutes: int, limit: int) -> dict[str, Any]:
+        safe_minutes = max(5, min(minutes, 240))
+        safe_limit = max(1, min(limit, 100))
+        started_at = time.perf_counter()
+        diagnosis, target = self.resolve_token(
+            diagnosis_token,
+            "get_related_alerts",
+            {"minutes": safe_minutes, "limit": safe_limit},
+        )
+        try:
+            payload = {
+                "target": self._target_reference(target),
+                "minutes": safe_minutes,
+                "alerts": self._related_alert_payloads(diagnosis.user_id, target, safe_minutes, safe_limit, exclude_event_id=diagnosis.event_id),
+                "note": "Results are deduplicated platform alerts related by the selected target endpoint or a user-configured service dependency.",
+            }
+            self.complete_audit(diagnosis.id, "get_related_alerts", started_at, payload)
+            return payload
+        except Exception as exc:
+            self.complete_audit(diagnosis.id, "get_related_alerts", started_at, error=exc)
+            raise
+
+    def kubernetes_events(self, diagnosis_token: str, minutes: int, limit: int) -> dict[str, Any]:
+        safe_minutes = max(5, min(minutes, 240))
+        safe_limit = max(1, min(limit, 100))
+        started_at = time.perf_counter()
+        diagnosis, _ = self.resolve_token(
+            diagnosis_token,
+            "get_kubernetes_events",
+            {"minutes": safe_minutes, "limit": safe_limit},
+        )
+        try:
+            events = self._kubernetes_warning_payloads(diagnosis.user_id, safe_minutes, safe_limit)
+            payload = {
+                "minutes": safe_minutes,
+                "events": events,
+                "note": (
+                    "Kubernetes warning events are read-only cluster context from clusters owned by this user. "
+                    "There is no target-to-cluster binding yet, so they are not proof that a warning belongs to the diagnosis target."
+                ),
+            }
+            self.complete_audit(diagnosis.id, "get_kubernetes_events", started_at, payload)
+            return payload
+        except Exception as exc:
+            self.complete_audit(diagnosis.id, "get_kubernetes_events", started_at, error=exc)
+            raise
+
+    def service_dependencies(self, diagnosis_token: str) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        diagnosis, target = self.resolve_token(diagnosis_token, "get_service_dependencies")
+        try:
+            dependencies, targets = self._dependency_context(diagnosis.user_id, target.id)
+            payload = {
+                "target": self._target_reference(target),
+                "dependencies": [self._dependency_payload(item, targets, target.id) for item in dependencies],
+                "note": "Dependencies are user-maintained topology metadata. They guide correlation but do not prove causality.",
+            }
+            self.complete_audit(diagnosis.id, "get_service_dependencies", started_at, payload)
+            return payload
+        except Exception as exc:
+            self.complete_audit(diagnosis.id, "get_service_dependencies", started_at, error=exc)
+            raise
+
+    def incident_timeline(self, diagnosis_token: str, minutes: int, limit: int) -> dict[str, Any]:
+        safe_minutes = max(5, min(minutes, 240))
+        safe_limit = max(5, min(limit, 100))
+        started_at = time.perf_counter()
+        diagnosis, target = self.resolve_token(
+            diagnosis_token,
+            "get_incident_timeline",
+            {"minutes": safe_minutes, "limit": safe_limit},
+        )
+        try:
+            timeline: list[dict[str, Any]] = []
+            if diagnosis.event_id is not None:
+                event = self._owned_event(diagnosis.user_id, diagnosis.event_id)
+                timeline.append({
+                    "time": self._iso(event.last_triggered_at or event.created_at),
+                    "kind": "selected_alert",
+                    "summary": event.rule_name,
+                    "details": self._event_payload(event),
+                })
+                activities = (
+                    self.db.query(AlertEventActivity)
+                    .filter(AlertEventActivity.event_id == event.id, AlertEventActivity.user_id == diagnosis.user_id)
+                    .order_by(AlertEventActivity.created_at.asc(), AlertEventActivity.id.asc())
+                    .limit(20)
+                    .all()
+                )
+                timeline.extend({
+                    "time": self._iso(activity.created_at),
+                    "kind": "alert_activity",
+                    "summary": activity.action,
+                    "details": {"actor": activity.actor, "note": self._redact_text(activity.note)},
+                } for activity in activities)
+
+            check = (
+                self.db.query(TargetCheckResult)
+                .filter(TargetCheckResult.target_id == target.id, TargetCheckResult.user_id == diagnosis.user_id)
+                .order_by(TargetCheckResult.checked_at.desc(), TargetCheckResult.id.desc())
+                .first()
+            )
+            if check is not None:
+                timeline.append({
+                    "time": self._iso(check.checked_at),
+                    "kind": "target_check",
+                    "summary": f"Target check: {check.status}",
+                    "details": self._check_payload(check),
+                })
+
+            for event in self._related_alert_payloads(diagnosis.user_id, target, safe_minutes, safe_limit, exclude_event_id=diagnosis.event_id):
+                timeline.append({
+                    "time": event.get("last_triggered_at"),
+                    "kind": "related_alert",
+                    "summary": event.get("rule_name"),
+                    "details": event,
+                })
+            for event in self._kubernetes_warning_payloads(diagnosis.user_id, safe_minutes, safe_limit):
+                timeline.append({
+                    "time": event.get("created_at"),
+                    "kind": "kubernetes_warning_context",
+                    "summary": event.get("reason") or event.get("message") or "Kubernetes warning",
+                    "details": event,
+                })
+
+            timeline.sort(key=lambda item: item.get("time") or "")
+            payload = {
+                "target": self._target_reference(target),
+                "minutes": safe_minutes,
+                "timeline": timeline[-safe_limit:],
+                "note": (
+                    "This is an ordered evidence timeline. Kubernetes entries are cluster context only until a target-to-cluster binding is configured. "
+                    "A time relationship is not proof of root cause."
+                ),
+            }
+            self.complete_audit(diagnosis.id, "get_incident_timeline", started_at, payload)
+            return payload
+        except Exception as exc:
+            self.complete_audit(diagnosis.id, "get_incident_timeline", started_at, error=exc)
+            raise
+
+    def _dependency_context(self, user_id: int, target_id: int) -> tuple[list[ServiceDependency], dict[int, MonitorTarget]]:
+        dependencies = (
+            self.db.query(ServiceDependency)
+            .filter(
+                ServiceDependency.user_id == user_id,
+                or_(ServiceDependency.source_target_id == target_id, ServiceDependency.destination_target_id == target_id),
+            )
+            .order_by(ServiceDependency.created_at.desc(), ServiceDependency.id.desc())
+            .all()
+        )
+        target_ids = {target_id}
+        for dependency in dependencies:
+            target_ids.add(dependency.source_target_id)
+            target_ids.add(dependency.destination_target_id)
+        targets = (
+            self.db.query(MonitorTarget)
+            .filter(MonitorTarget.user_id == user_id, MonitorTarget.deleted_at.is_(None), MonitorTarget.id.in_(target_ids))
+            .all()
+        )
+        return dependencies, {item.id: item for item in targets}
+
+    def _related_alert_payloads(self, user_id: int, target: MonitorTarget, minutes: int, limit: int, *, exclude_event_id: int | None = None) -> list[dict[str, Any]]:
+        dependencies, targets = self._dependency_context(user_id, target.id)
+        related_targets = {target.id: target}
+        for dependency in dependencies:
+            related_id = dependency.destination_target_id if dependency.source_target_id == target.id else dependency.source_target_id
+            if related_id in targets:
+                related_targets[related_id] = targets[related_id]
+        since = _utcnow() - timedelta(minutes=minutes)
+        events = (
+            self.db.query(AlertEvent)
+            .filter(AlertEvent.user_id == user_id, AlertEvent.deleted_at.is_(None), AlertEvent.last_triggered_at >= since)
+            .order_by(AlertEvent.last_triggered_at.desc(), AlertEvent.id.desc())
+            .limit(500)
+            .all()
+        )
+        related: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for event in events:
+            if event.id == exclude_event_id:
+                continue
+            matching_target_ids = [target_id for target_id, candidate in related_targets.items() if _event_belongs_to_target(event, candidate)]
+            if not matching_target_ids or event.id in seen:
+                continue
+            seen.add(event.id)
+            payload = self._event_payload(event)
+            payload["relation"] = "same_target" if target.id in matching_target_ids else "dependency"
+            payload["related_target"] = self._target_reference(related_targets[matching_target_ids[0]])
+            related.append(payload)
+            if len(related) >= limit:
+                break
+        return related
+
+    def _kubernetes_warning_payloads(self, user_id: int, minutes: int, limit: int) -> list[dict[str, Any]]:
+        clusters = (
+            self.db.query(ManagedCluster)
+            .filter(ManagedCluster.user_id == user_id, ManagedCluster.deleted_at.is_(None))
+            .all()
+        )
+        cluster_names = {cluster.id: cluster.name for cluster in clusters}
+        if not cluster_names:
+            return []
+        since = _utcnow() - timedelta(minutes=minutes)
+        reports = (
+            self.db.query(ClusterAgentReport)
+            .filter(
+                ClusterAgentReport.cluster_id.in_(set(cluster_names)),
+                ClusterAgentReport.report_type == "alert",
+                ClusterAgentReport.created_at >= since,
+            )
+            .order_by(ClusterAgentReport.created_at.desc(), ClusterAgentReport.id.desc())
+            .limit(500)
+            .all()
+        )
+        events: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for report in reports:
+            raw_payload = report.payload or {}
+            if raw_payload.get("alert_type") != "kubernetes_warning":
+                continue
+            fingerprint = str(raw_payload.get("fingerprint") or report.id)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            details = raw_payload.get("details") if isinstance(raw_payload.get("details"), dict) else raw_payload
+            events.append({
+                "cluster": {"id": report.cluster_id, "name": cluster_names.get(report.cluster_id, "unknown")},
+                "namespace": self._redact_text(str(details.get("namespace") or "")) or None,
+                "reason": self._redact_text(str(details.get("reason") or report.source or "")) or None,
+                "message": self._redact_text(str(details.get("message") or report.message or "")) or None,
+                "resource_kind": self._redact_text(str(details.get("resource_kind") or "")) or None,
+                "resource_name": self._redact_text(str(details.get("resource_name") or "")) or None,
+                "level": report.level,
+                "created_at": self._iso(report.created_at),
+            })
+            if len(events) >= limit:
+                break
+        return events
+
+    @staticmethod
+    def _target_reference(target: MonitorTarget) -> dict[str, Any]:
+        return {"id": target.id, "name": target.name, "target_type": target.target_type, "exporter_kind": target.exporter_kind}
+
+    def _dependency_payload(self, dependency: ServiceDependency, targets: dict[int, MonitorTarget], selected_target_id: int) -> dict[str, Any]:
+        direction = "outbound" if dependency.source_target_id == selected_target_id else "inbound"
+        return {
+            "id": dependency.id,
+            "direction": direction,
+            "dependency_type": dependency.dependency_type,
+            "description": self._redact_text(dependency.description),
+            "source": self._target_reference(targets[dependency.source_target_id]) if dependency.source_target_id in targets else {"id": dependency.source_target_id, "name": "unavailable"},
+            "destination": self._target_reference(targets[dependency.destination_target_id]) if dependency.destination_target_id in targets else {"id": dependency.destination_target_id, "name": "unavailable"},
+            "created_at": self._iso(dependency.created_at),
+        }
+
+    @staticmethod
+    def _iso(value: datetime | None) -> str | None:
+        return value.isoformat() if value else None
     def _owned_target(self, user_id: int, target_id: int) -> MonitorTarget:
         target = (
             self.db.query(MonitorTarget)

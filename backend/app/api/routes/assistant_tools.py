@@ -45,6 +45,10 @@ class LogsToolRequest(TokenToolRequest):
     limit: int = Field(default=50, ge=1, le=100)
 
 
+class ContextToolRequest(TokenToolRequest):
+    minutes: int = Field(default=60, ge=5, le=240)
+    limit: int = Field(default=50, ge=1, le=100)
+
 def verify_dify_tool_secret(x_dify_tool_secret: str | None = Header(default=None)) -> None:
     expected = os.getenv("DIFY_TOOL_SECRET", "") or get_settings().dify_tool_secret
     if not expected:
@@ -61,7 +65,7 @@ def secrets_compare(left: str, right: str) -> bool:
 
 def tool_service(db: Session = Depends(get_db)) -> DiagnosisToolService:
     settings = get_settings()
-    max_calls = _safe_int(str(settings.ai_diagnosis_max_tool_calls), default=5, lower=1, upper=6)
+    max_calls = _safe_int(str(settings.ai_diagnosis_max_tool_calls), default=8, lower=1, upper=8)
     ttl_minutes = _safe_int(str(settings.ai_diagnosis_token_ttl_minutes), default=10, lower=1, upper=10)
     timeout_seconds = _safe_int(str(settings.ai_diagnosis_tool_timeout_seconds), default=10, lower=1, upper=10)
     return DiagnosisToolService(db, token_ttl_minutes=ttl_minutes, max_tool_calls=max_calls, tool_timeout_seconds=timeout_seconds)
@@ -122,5 +126,36 @@ async def get_target_metrics(payload: MetricsToolRequest, service: DiagnosisTool
 async def search_target_logs(payload: LogsToolRequest, service: DiagnosisToolService = Depends(tool_service)) -> dict:
     try:
         return await service.target_logs(payload.diagnosis_token, payload.keyword, payload.minutes, payload.limit)
+    except Exception as exc:
+        raise translate_tool_error(exc) from exc
+
+@router.post("/related-alerts", dependencies=[Depends(verify_dify_tool_secret)])
+def get_related_alerts(payload: ContextToolRequest, service: DiagnosisToolService = Depends(tool_service)) -> dict:
+    try:
+        return service.related_alerts(payload.diagnosis_token, payload.minutes, payload.limit)
+    except Exception as exc:
+        raise translate_tool_error(exc) from exc
+
+
+@router.post("/kubernetes-events", dependencies=[Depends(verify_dify_tool_secret)])
+def get_kubernetes_events(payload: ContextToolRequest, service: DiagnosisToolService = Depends(tool_service)) -> dict:
+    try:
+        return service.kubernetes_events(payload.diagnosis_token, payload.minutes, payload.limit)
+    except Exception as exc:
+        raise translate_tool_error(exc) from exc
+
+
+@router.post("/service-dependencies", dependencies=[Depends(verify_dify_tool_secret)])
+def get_service_dependencies(payload: TokenToolRequest, service: DiagnosisToolService = Depends(tool_service)) -> dict:
+    try:
+        return service.service_dependencies(payload.diagnosis_token)
+    except Exception as exc:
+        raise translate_tool_error(exc) from exc
+
+
+@router.post("/incident-timeline", dependencies=[Depends(verify_dify_tool_secret)])
+def get_incident_timeline(payload: ContextToolRequest, service: DiagnosisToolService = Depends(tool_service)) -> dict:
+    try:
+        return service.incident_timeline(payload.diagnosis_token, payload.minutes, payload.limit)
     except Exception as exc:
         raise translate_tool_error(exc) from exc

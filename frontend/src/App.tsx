@@ -71,6 +71,9 @@ type ClusterOverview = { cluster: ManagedCluster; heartbeat?: ClusterAgentHeartb
 
 type AIDiagnosis = {
   id: number;
+  target_id: number;
+  event_id?: number | null;
+  question: string;
   status: string;
   provider?: string | null;
   report_summary?: string | null;
@@ -78,11 +81,27 @@ type AIDiagnosis = {
   tool_calls_used: number;
 };
 
+type ServiceDependency = { id: number; source_target_id: number; destination_target_id: number; dependency_type: 'runtime' | 'data' | 'network' | 'deployment'; description?: string | null; };
+type AIDiagnosisFeedbackVerdict = 'accepted' | 'partially_accepted' | 'rejected' | 'insufficient_evidence';
+type AIDiagnosisToolName = 'get_alert_context' | 'get_target_status' | 'get_target_metrics' | 'search_target_logs' | 'get_related_alerts' | 'get_kubernetes_events' | 'get_service_dependencies' | 'get_incident_timeline';
+type AIDiagnosisEvaluationCase = { id: number; name: string; target_id: number; event_id?: number | null; question: string; expected_tool_names: AIDiagnosisToolName[]; expected_evidence_terms: string[]; enabled: boolean; };
+type AIDiagnosisEvaluationResult = { id: number; case_id: number; diagnosis_id: number; expected_tool_names: string[]; expected_evidence_terms: string[]; successful_tool_names: string[]; cited_tool_names: string[]; unsupported_cited_tool_names: string[]; matched_evidence_terms: string[]; unsupported_evidence_terms: string[]; tool_call_score: number; evidence_citation_score: number; evidence_term_score: number; };
 type AIChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
 };
+
+const diagnosisToolOptions: { label: string; value: AIDiagnosisToolName }[] = [
+  { value: 'get_alert_context', label: 'Alert context' },
+  { value: 'get_target_status', label: 'Target status' },
+  { value: 'get_target_metrics', label: 'Target metrics' },
+  { value: 'search_target_logs', label: 'Target logs' },
+  { value: 'get_related_alerts', label: 'Related alerts' },
+  { value: 'get_kubernetes_events', label: 'Kubernetes events (context)' },
+  { value: 'get_service_dependencies', label: 'Service dependencies' },
+  { value: 'get_incident_timeline', label: 'Incident timeline' },
+];
 
 class ApiError extends Error {
   status: number;
@@ -595,6 +614,17 @@ export default function App() {
   const [aiQuestion, setAiQuestion] = useState('分析当前监控对象和所选告警，给出可能原因、验证命令和恢复步骤');
   const [aiInput, setAiInput] = useState('');
   const [aiResult, setAiResult] = useState<AIDiagnosis | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<AIDiagnosisFeedbackVerdict | null>(null);
+  const [dependencies, setDependencies] = useState<ServiceDependency[]>([]);
+  const [dependencyDestinationId, setDependencyDestinationId] = useState<number | null>(null);
+  const [dependencyType, setDependencyType] = useState<ServiceDependency['dependency_type']>('runtime');
+  const [dependencyDescription, setDependencyDescription] = useState('');
+  const [evaluationCases, setEvaluationCases] = useState<AIDiagnosisEvaluationCase[]>([]);
+  const [evaluationCaseId, setEvaluationCaseId] = useState<number | null>(null);
+  const [evaluationCaseName, setEvaluationCaseName] = useState('');
+  const [evaluationExpectedTools, setEvaluationExpectedTools] = useState<AIDiagnosisToolName[]>(['get_alert_context', 'get_target_status', 'get_target_metrics', 'search_target_logs']);
+  const [evaluationEvidenceTerms, setEvaluationEvidenceTerms] = useState('');
+  const [evaluationResult, setEvaluationResult] = useState<AIDiagnosisEvaluationResult | null>(null);
   const [aiSessionActive, setAiSessionActive] = useState(false);
   const [aiMessages, setAiMessages] = useState<AIChatMessage[]>([]);
   const [loginForm] = Form.useForm();
@@ -843,6 +873,129 @@ export default function App() {
       return [target.id, checks[0]] as const;
     }));
     setTargetChecks(Object.fromEntries(entries));
+  }
+  async function loadDependencies(targetId: number) {
+    if (!token) return;
+    try {
+      const rows = await request<ServiceDependency[]>(`/dependencies?target_id=${targetId}`, token);
+      setDependencies(rows);
+    } catch (error) {
+      handleRequestError(error, 'Failed to load service dependencies');
+      setDependencies([]);
+    }
+  }
+
+  async function createServiceDependency() {
+    if (!token || !selectedTarget || !dependencyDestinationId) return;
+    setLoading(true);
+    try {
+      await request<ServiceDependency>('/dependencies', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          source_target_id: selectedTarget.id,
+          destination_target_id: dependencyDestinationId,
+          dependency_type: dependencyType,
+          description: dependencyDescription.trim() || null,
+        }),
+      });
+      setDependencyDestinationId(null);
+      setDependencyDescription('');
+      await loadDependencies(selectedTarget.id);
+      message.success('Service dependency added');
+    } catch (error) {
+      handleRequestError(error, 'Failed to add service dependency');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteServiceDependency(dependencyId: number) {
+    if (!token || !selectedTarget) return;
+    setLoading(true);
+    try {
+      await request(`/dependencies/${dependencyId}`, token, { method: 'DELETE' });
+      await loadDependencies(selectedTarget.id);
+      message.success('Service dependency deleted');
+    } catch (error) {
+      handleRequestError(error, 'Failed to delete service dependency');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitAIFeedback(verdict: AIDiagnosisFeedbackVerdict) {
+    if (!token || !aiResult) return;
+    setLoading(true);
+    try {
+      await request(`/assistant/diagnoses/${aiResult.id}/feedback`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ verdict }),
+      });
+      setAiFeedback(verdict);
+      message.success('Diagnosis feedback saved');
+    } catch (error) {
+      handleRequestError(error, 'Failed to save diagnosis feedback');
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function loadEvaluationCases() {
+    if (!token) {
+      setEvaluationCases([]);
+      return;
+    }
+    try {
+      const rows = await request<AIDiagnosisEvaluationCase[]>('/assistant/evaluation-cases', token);
+      setEvaluationCases(rows);
+    } catch (error) {
+      handleRequestError(error, 'Failed to load diagnosis evaluation cases');
+    }
+  }
+
+  async function createEvaluationCase() {
+    if (!token || !aiResult || evaluationExpectedTools.length === 0) return;
+    setLoading(true);
+    try {
+      const created = await request<AIDiagnosisEvaluationCase>('/assistant/evaluation-cases', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: evaluationCaseName.trim() || `Diagnosis ${aiResult.id}`,
+          target_id: aiResult.target_id,
+          event_id: aiResult.event_id ?? null,
+          question: aiResult.question,
+          expected_tool_names: evaluationExpectedTools,
+          expected_evidence_terms: evaluationEvidenceTerms.split(/[，,\n]/).map((term) => term.trim()).filter(Boolean).slice(0, 20),
+          enabled: true,
+        }),
+      });
+      setEvaluationCases((items) => [created, ...items]);
+      setEvaluationCaseId(created.id);
+      setEvaluationCaseName('');
+      setEvaluationEvidenceTerms('');
+      setEvaluationResult(null);
+      message.success('Diagnosis evaluation case created');
+    } catch (error) {
+      handleRequestError(error, 'Failed to create diagnosis evaluation case');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runDiagnosisEvaluation() {
+    if (!token || !aiResult || !evaluationCaseId) return;
+    setLoading(true);
+    try {
+      const result = await request<AIDiagnosisEvaluationResult>(`/assistant/evaluation-cases/${evaluationCaseId}/evaluate`, token, {
+        method: 'POST',
+        body: JSON.stringify({ diagnosis_id: aiResult.id }),
+      });
+      setEvaluationResult(result);
+      message.success('Diagnosis evaluation completed');
+    } catch (error) {
+      handleRequestError(error, 'Failed to evaluate diagnosis');
+    } finally {
+      setLoading(false);
+    }
   }
   async function loadTargetHistory(targetId: number) {
     if (!token) return;
@@ -1234,6 +1387,9 @@ export default function App() {
       }
       const assistantMessage: AIChatMessage = { role: 'assistant', content: answer, created_at: new Date().toISOString() };
       setAiResult(result);
+      setAiFeedback(null);
+      setEvaluationCaseId(null);
+      setEvaluationResult(null);
       setAiMessages([...nextMessages, assistantMessage]);
       setAiSessionActive(true);
       message.success('Dify 诊断完成');
@@ -1259,6 +1415,9 @@ export default function App() {
     setAiSessionActive(true);
     setAiMessages([]);
     setAiResult(null);
+    setAiFeedback(null);
+    setEvaluationCaseId(null);
+    setEvaluationResult(null);
     await sendAIMessage(firstQuestion, []);
   }
 
@@ -1414,6 +1573,7 @@ export default function App() {
     setAiMessages([]);
     setAiInput('');
     setAiResult(null);
+    setAiFeedback(null);
   }
 
   async function createChannel(values: {
@@ -1494,6 +1654,10 @@ export default function App() {
   useEffect(() => { void loadAll(); }, [token]);
 
   useEffect(() => {
+    if (token) void loadEvaluationCases();
+  }, [token]);
+
+  useEffect(() => {
     if (!token || activePage !== 'clusters' || !selectedClusterId) return;
     const timer = window.setInterval(() => { void refreshClusterOverview(selectedClusterId).catch(() => undefined); }, 30000);
     return () => window.clearInterval(timer);
@@ -1504,6 +1668,13 @@ export default function App() {
     if (currentUser && currentUser.role !== 'root' && activePage === 'platformHealth') setActivePage('overview');
   }, [token, currentUser?.role, activePage]);
 
+  useEffect(() => {
+    if (!token || !selectedTargetId) {
+      setDependencies([]);
+      return;
+    }
+    void loadDependencies(selectedTargetId);
+  }, [token, selectedTargetId]);
   useEffect(() => {
     if (!selectedTarget) {
       setSelectedAlertId(null);
@@ -2105,6 +2276,43 @@ export default function App() {
                   <Descriptions.Item label="状态"><Tag color={statusColor(selectedAlert.status)}>{displayText(selectedAlert.status)}</Tag></Descriptions.Item>
                 </Descriptions>
               ) : <Empty description="再选择一个告警" />}
+              {selectedTarget ? <div className="assistantDependencies">
+                <Space direction="vertical" className="fullWidth" size={8}>
+                  <strong>Service dependencies</strong>
+                  <Select
+                    placeholder="Dependent target"
+                    value={dependencyDestinationId ?? undefined}
+                    onChange={setDependencyDestinationId}
+                    options={targets.filter((item) => item.id !== selectedTarget.id).map((item) => ({ label: `${item.name} - ${item.endpoint}`, value: item.id }))}
+                    showSearch
+                    optionFilterProp="label"
+                  />
+                  <Space.Compact className="fullWidth">
+                    <Select
+                      value={dependencyType}
+                      onChange={setDependencyType}
+                      options={[
+                        { value: 'runtime', label: 'Runtime' },
+                        { value: 'data', label: 'Data' },
+                        { value: 'network', label: 'Network' },
+                        { value: 'deployment', label: 'Deployment' },
+                      ]}
+                    />
+                    <Input value={dependencyDescription} onChange={(event) => setDependencyDescription(event.target.value)} placeholder="Optional description" maxLength={1000} />
+                    <Button type="primary" onClick={createServiceDependency} disabled={!dependencyDestinationId} loading={loading}>Add</Button>
+                  </Space.Compact>
+                  {dependencies.length ? dependencies.map((dependency) => {
+                    const source = targets.find((item) => item.id === dependency.source_target_id);
+                    const destination = targets.find((item) => item.id === dependency.destination_target_id);
+                    return <Space key={dependency.id} wrap className="fullWidth">
+                      <Tag color="blue">{dependency.dependency_type}</Tag>
+                      <span>{source?.name || dependency.source_target_id} -&gt; {destination?.name || dependency.destination_target_id}</span>
+                      {dependency.description ? <span>{dependency.description}</span> : null}
+                      <Popconfirm title="Delete this dependency?" onConfirm={() => deleteServiceDependency(dependency.id)}><Button size="small" danger>Delete</Button></Popconfirm>
+                    </Space>;
+                  }) : <span>No dependency configured for this target.</span>}
+                </Space>
+              </div> : null}
               <Card size="small" title="处理记录">
                 {selectedAlertActivities.length ? (
                   <Space direction="vertical" className="fullWidth">
@@ -2154,7 +2362,51 @@ export default function App() {
                   <Button type="primary" icon={<SendOutlined />} loading={loading} onClick={() => sendAIMessage(aiInput)}>发送</Button>
                 </Space.Compact>
               ) : null}
-              {aiResult?.report_summary ? <Button icon={<CheckCircleOutlined />} onClick={saveAIResultAsAlertNote}>保存当前 Dify 诊断到处理记录</Button> : null}
+              {aiResult?.report_summary ? <Space wrap>
+                <Button icon={<CheckCircleOutlined />} onClick={saveAIResultAsAlertNote}>Save current Dify diagnosis to the alert history</Button>
+                <span>Human feedback:</span>
+                <Button size="small" type={aiFeedback === 'accepted' ? 'primary' : 'default'} onClick={() => submitAIFeedback('accepted')}>Accepted</Button>
+                <Button size="small" type={aiFeedback === 'partially_accepted' ? 'primary' : 'default'} onClick={() => submitAIFeedback('partially_accepted')}>Partially accepted</Button>
+                <Button size="small" type={aiFeedback === 'rejected' ? 'primary' : 'default'} onClick={() => submitAIFeedback('rejected')}>Rejected</Button>
+                <Button size="small" type={aiFeedback === 'insufficient_evidence' ? 'primary' : 'default'} onClick={() => submitAIFeedback('insufficient_evidence')}>Insufficient evidence</Button>
+              </Space> : null}
+              {aiResult?.report_summary ? (
+                <div className="diagnosisEvaluation">
+                  <Space direction="vertical" className="fullWidth" size={8}>
+                    <strong>Diagnosis evaluation</strong>
+                    <Input value={evaluationCaseName} onChange={(event) => setEvaluationCaseName(event.target.value)} placeholder="Evaluation case name" maxLength={160} />
+                    <Input.TextArea rows={2} value={evaluationEvidenceTerms} onChange={(event) => setEvaluationEvidenceTerms(event.target.value)} placeholder="Expected evidence terms, separated by commas" maxLength={2000} />
+                    <Select
+                      mode="multiple"
+                      value={evaluationExpectedTools}
+                      onChange={setEvaluationExpectedTools}
+                      options={diagnosisToolOptions}
+                      placeholder="Expected evidence tools"
+                    />
+                    <Space wrap>
+                      <Button onClick={createEvaluationCase} disabled={evaluationExpectedTools.length === 0} loading={loading}>Create evaluation case from this diagnosis</Button>
+                      <Select
+                        value={evaluationCaseId ?? undefined}
+                        onChange={(value) => { setEvaluationCaseId(value); setEvaluationResult(null); }}
+                        options={evaluationCases.filter((item) => item.target_id === aiResult.target_id).map((item) => ({ label: item.name, value: item.id }))}
+                        placeholder="Select evaluation case"
+                        style={{ minWidth: 240 }}
+                      />
+                      <Button type="primary" onClick={runDiagnosisEvaluation} disabled={!evaluationCaseId} loading={loading}>Evaluate current diagnosis</Button>
+                    </Space>
+                    {evaluationResult ? <Descriptions size="small" column={1} bordered>
+                      <Descriptions.Item label="Expected tools">{evaluationResult.expected_tool_names.join(', ') || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Successful tools">{evaluationResult.successful_tool_names.join(', ') || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Tool coverage"><Progress percent={Math.round(evaluationResult.tool_call_score * 100)} size="small" /></Descriptions.Item>
+                      <Descriptions.Item label="Citation evidence"><Progress percent={Math.round(evaluationResult.evidence_citation_score * 100)} size="small" /></Descriptions.Item>
+                      <Descriptions.Item label="Unsupported citations">{evaluationResult.unsupported_cited_tool_names.join(', ') || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Evidence terms"><Progress percent={Math.round(evaluationResult.evidence_term_score * 100)} size="small" /></Descriptions.Item>
+                      <Descriptions.Item label="Matched evidence terms">{evaluationResult.matched_evidence_terms.join(', ') || '-'}</Descriptions.Item>
+                      <Descriptions.Item label="Unsupported evidence terms">{evaluationResult.unsupported_evidence_terms.join(', ') || '-'}</Descriptions.Item>
+                    </Descriptions> : null}
+                  </Space>
+                </div>
+              ) : null}
             </Space>
           </Card>
         </Col>

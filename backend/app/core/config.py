@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     dify_app_api_key: str = ""
     dify_diagnosis_timeout_seconds: int = 90
     ai_diagnosis_token_ttl_minutes: int = 10
-    ai_diagnosis_max_tool_calls: int = 5
+    ai_diagnosis_max_tool_calls: int = 8
     ai_diagnosis_tool_timeout_seconds: int = 10
 
     smtp_host: str = ""
